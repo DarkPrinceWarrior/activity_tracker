@@ -1,0 +1,52 @@
+package com.example.activity_tracker.wear
+
+import android.util.Log
+import com.example.activity_tracker.data.local.entity.WearEventEntity
+import com.example.activity_tracker.data.repository.SamplesRepository
+import com.example.activity_tracker.wear.model.WearState
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.launch
+
+/**
+ * Агрегатор событий ношения часов для записи в БД
+ */
+class WearDataAggregator(
+    private val repository: SamplesRepository
+) {
+    /**
+     * Подписывается на Flow событий ношения и сохраняет в БД
+     */
+    fun collectAndStore(
+        wearStateFlow: Flow<WearState>,
+        scope: CoroutineScope
+    ) {
+        scope.launch {
+            wearStateFlow
+                .catch { e ->
+                    Log.e(TAG, "Error collecting wear state", e)
+                }
+                .collect { wearState ->
+                    saveWearEvent(wearState)
+                }
+        }
+    }
+
+    private suspend fun saveWearEvent(wearState: WearState) {
+        try {
+            val entity = WearEventEntity(
+                ts_ms = wearState.timestamp,
+                state = wearState.state.value
+            )
+            repository.saveWear(listOf(entity))
+            Log.d(TAG, "Saved wear event: ${wearState.state}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error saving wear event", e)
+        }
+    }
+
+    companion object {
+        private const val TAG = "WearDataAggregator"
+    }
+}
