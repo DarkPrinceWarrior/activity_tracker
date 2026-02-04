@@ -100,6 +100,15 @@
   - Зарегистрирован CollectorService с foregroundServiceType
   - Добавлены требуемые hardware features
 
-**Статус:** Foreground Service готов, переходим к Heart Rate сбору
+#### ✅ Шаг 8: HeartRateCollector - сбор данных пульса (ЗАВЕРШЕН)
+- Создана модель HeartRateSample (timestamp, bpm, confidence)
+- Создан HeartRateCollector с датчиком TYPE_HEART_RATE
+- Частота сбора: ~1 Гц (SENSOR_DELAY_NORMAL) согласно плану
+- Фильтрация нереалистичных значений (0-250 bpm)
+- Расчет confidence на основе accuracy сенсора (HIGH=1.0, MEDIUM=0.85, LOW=0.6)
+- Создан HeartRateDataAggregator с меньшим буфером (20 vs 100)
+- Интегрирован в CollectorService как 7-й параллельный поток
 
-**Следующий шаг:** Добавление HeartRateCollector для сбора данных пульса
+**Статус:** Итерация 1 почти завершена, осталось добавить Battery tracking и UI
+
+**Следующий шаг:** Добавление BatteryTracker для мониторинга заряда батареи

@@ -13,6 +13,8 @@ import com.example.activity_tracker.ActivityTrackerApp
 import com.example.activity_tracker.R
 import com.example.activity_tracker.ble.BleDataAggregator
 import com.example.activity_tracker.ble.BleScanner
+import com.example.activity_tracker.heartrate.HeartRateCollector
+import com.example.activity_tracker.heartrate.HeartRateDataAggregator
 import com.example.activity_tracker.sensor.SensorCollector
 import com.example.activity_tracker.sensor.SensorDataAggregator
 import com.example.activity_tracker.wear.WearDataAggregator
@@ -40,6 +42,9 @@ class CollectorService : Service() {
     private lateinit var wearStateTracker: WearStateTracker
     private lateinit var wearAggregator: WearDataAggregator
 
+    private lateinit var heartRateCollector: HeartRateCollector
+    private lateinit var heartRateAggregator: HeartRateDataAggregator
+
     private val collectionJobs = mutableListOf<Job>()
 
     override fun onCreate() {
@@ -58,6 +63,9 @@ class CollectorService : Service() {
 
         wearStateTracker = WearStateTracker(this)
         wearAggregator = WearDataAggregator(repository)
+
+        heartRateCollector = HeartRateCollector(this)
+        heartRateAggregator = HeartRateDataAggregator(repository)
 
         // Создание и показ foreground notification
         startForeground(NOTIFICATION_ID, createNotification())
@@ -133,6 +141,16 @@ class CollectorService : Service() {
             serviceScope.launch {
                 wearAggregator.collectAndStore(
                     wearStateTracker.trackWearState(),
+                    this
+                )
+            }
+        )
+
+        // Запуск сбора пульса (опциональный)
+        collectionJobs.add(
+            serviceScope.launch {
+                heartRateAggregator.collectAndStore(
+                    heartRateCollector.collectHeartRate(),
                     this
                 )
             }
