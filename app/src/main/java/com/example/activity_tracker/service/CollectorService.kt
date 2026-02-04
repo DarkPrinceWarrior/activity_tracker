@@ -11,6 +11,8 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.activity_tracker.ActivityTrackerApp
 import com.example.activity_tracker.R
+import com.example.activity_tracker.battery.BatteryDataAggregator
+import com.example.activity_tracker.battery.BatteryTracker
 import com.example.activity_tracker.ble.BleDataAggregator
 import com.example.activity_tracker.ble.BleScanner
 import com.example.activity_tracker.heartrate.HeartRateCollector
@@ -45,6 +47,9 @@ class CollectorService : Service() {
     private lateinit var heartRateCollector: HeartRateCollector
     private lateinit var heartRateAggregator: HeartRateDataAggregator
 
+    private lateinit var batteryTracker: BatteryTracker
+    private lateinit var batteryAggregator: BatteryDataAggregator
+
     private val collectionJobs = mutableListOf<Job>()
 
     override fun onCreate() {
@@ -66,6 +71,9 @@ class CollectorService : Service() {
 
         heartRateCollector = HeartRateCollector(this)
         heartRateAggregator = HeartRateDataAggregator(repository)
+
+        batteryTracker = BatteryTracker(this)
+        batteryAggregator = BatteryDataAggregator(repository)
 
         // Создание и показ foreground notification
         startForeground(NOTIFICATION_ID, createNotification())
@@ -156,7 +164,17 @@ class CollectorService : Service() {
             }
         )
 
-        Log.d(TAG, "All collectors started")
+        // Запуск отслеживания батареи
+        collectionJobs.add(
+            serviceScope.launch {
+                batteryAggregator.collectAndStore(
+                    batteryTracker.trackBattery(),
+                    this
+                )
+            }
+        )
+
+        Log.d(TAG, "All collectors started (8 parallel streams)")
     }
 
     private fun stopDataCollection() {

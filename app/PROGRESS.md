@@ -109,6 +109,14 @@
 - Создан HeartRateDataAggregator с меньшим буфером (20 vs 100)
 - Интегрирован в CollectorService как 7-й параллельный поток
 
-**Статус:** Итерация 1 почти завершена, осталось добавить Battery tracking и UI
+#### ✅ Шаг 9: BatteryTracker - мониторинг батареи (ЗАВЕРШЕН)
+- Создана модель BatterySample (timestamp, level, isCharging)
+- Создан BatteryTracker с BroadcastReceiver для ACTION_BATTERY_CHANGED
+- Отправка начального состояния батареи при запуске
+- Методы getCurrentBatteryLevel() и isCharging() для синхронного доступа
+- Создан BatteryDataAggregator (без буферизации, события редкие)
+- Интегрирован в CollectorService как 8-й параллельный поток
 
-**Следующий шаг:** Добавление BatteryTracker для мониторинга заряда батареи
+**Статус:** Все сборщики данных готовы! Осталось только базовый UI
+
+**Следующий шаг:** Создание минимального UI для статуса сбора данных
