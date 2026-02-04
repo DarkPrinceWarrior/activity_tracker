@@ -59,6 +59,7 @@ dependencies {
     // Lifecycle
     implementation(libs.lifecycle.runtime.ktx)
     implementation(libs.lifecycle.service)
+    implementation(libs.lifecycle.viewmodel.compose)
 
     // WorkManager
     implementation(libs.work.runtime.ktx)
