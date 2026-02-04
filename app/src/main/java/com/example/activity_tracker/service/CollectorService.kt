@@ -1,0 +1,206 @@
+package com.example.activity_tracker.service
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.os.IBinder
+import android.util.Log
+import androidx.core.app.NotificationCompat
+import com.example.activity_tracker.ActivityTrackerApp
+import com.example.activity_tracker.R
+import com.example.activity_tracker.ble.BleDataAggregator
+import com.example.activity_tracker.ble.BleScanner
+import com.example.activity_tracker.sensor.SensorCollector
+import com.example.activity_tracker.sensor.SensorDataAggregator
+import com.example.activity_tracker.wear.WearDataAggregator
+import com.example.activity_tracker.wear.WearStateTracker
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+
+/**
+ * Foreground Service для непрерывного сбора данных с сенсоров, BLE и wear-событий
+ * Согласно секции 23.1 и Итерации 1 плана
+ */
+class CollectorService : Service() {
+
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    private lateinit var sensorCollector: SensorCollector
+    private lateinit var sensorAggregator: SensorDataAggregator
+
+    private lateinit var bleScanner: BleScanner
+    private lateinit var bleAggregator: BleDataAggregator
+
+    private lateinit var wearStateTracker: WearStateTracker
+    private lateinit var wearAggregator: WearDataAggregator
+
+    private val collectionJobs = mutableListOf<Job>()
+
+    override fun onCreate() {
+        super.onCreate()
+        Log.d(TAG, "CollectorService created")
+
+        val app = application as ActivityTrackerApp
+        val repository = app.samplesRepository
+
+        // Инициализация компонентов
+        sensorCollector = SensorCollector(this)
+        sensorAggregator = SensorDataAggregator(repository)
+
+        bleScanner = BleScanner(this)
+        bleAggregator = BleDataAggregator(repository)
+
+        wearStateTracker = WearStateTracker(this)
+        wearAggregator = WearDataAggregator(repository)
+
+        // Создание и показ foreground notification
+        startForeground(NOTIFICATION_ID, createNotification())
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.d(TAG, "CollectorService started")
+
+        when (intent?.action) {
+            ACTION_START_COLLECTION -> startDataCollection()
+            ACTION_STOP_COLLECTION -> stopDataCollection()
+            else -> startDataCollection()
+        }
+
+        return START_STICKY
+    }
+
+    private fun startDataCollection() {
+        Log.d(TAG, "Starting data collection")
+
+        // Запуск сбора с акселерометра
+        collectionJobs.add(
+            serviceScope.launch {
+                sensorAggregator.collectAndStore(
+                    sensorCollector.collectAccelerometer(),
+                    this
+                )
+            }
+        )
+
+        // Запуск сбора с гироскопа
+        collectionJobs.add(
+            serviceScope.launch {
+                sensorAggregator.collectAndStore(
+                    sensorCollector.collectGyroscope(),
+                    this
+                )
+            }
+        )
+
+        // Запуск сбора с барометра (опциональный)
+        collectionJobs.add(
+            serviceScope.launch {
+                sensorAggregator.collectAndStore(
+                    sensorCollector.collectBarometer(),
+                    this
+                )
+            }
+        )
+
+        // Запуск сбора с магнитометра (опциональный)
+        collectionJobs.add(
+            serviceScope.launch {
+                sensorAggregator.collectAndStore(
+                    sensorCollector.collectMagnetometer(),
+                    this
+                )
+            }
+        )
+
+        // Запуск BLE-сканирования
+        collectionJobs.add(
+            serviceScope.launch {
+                bleAggregator.collectAndStore(
+                    bleScanner.scanBeacons(this),
+                    this
+                )
+            }
+        )
+
+        // Запуск отслеживания ношения часов
+        collectionJobs.add(
+            serviceScope.launch {
+                wearAggregator.collectAndStore(
+                    wearStateTracker.trackWearState(),
+                    this
+                )
+            }
+        )
+
+        Log.d(TAG, "All collectors started")
+    }
+
+    private fun stopDataCollection() {
+        Log.d(TAG, "Stopping data collection")
+        collectionJobs.forEach { it.cancel() }
+        collectionJobs.clear()
+    }
+
+    override fun onDestroy() {
+        Log.d(TAG, "CollectorService destroyed")
+        stopDataCollection()
+        serviceScope.cancel()
+        super.onDestroy()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun createNotification(): Notification {
+        createNotificationChannel()
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Activity Tracker")
+            .setContentText("Сбор данных активности")
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+    }
+
+    private fun createNotificationChannel() {
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "Activity Collection",
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = "Непрерывный сбор данных с сенсоров"
+        }
+
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.createNotificationChannel(channel)
+    }
+
+    companion object {
+        private const val TAG = "CollectorService"
+        private const val NOTIFICATION_ID = 1001
+        private const val CHANNEL_ID = "activity_collection"
+
+        const val ACTION_START_COLLECTION = "com.example.activity_tracker.START_COLLECTION"
+        const val ACTION_STOP_COLLECTION = "com.example.activity_tracker.STOP_COLLECTION"
+
+        fun start(context: Context) {
+            val intent = Intent(context, CollectorService::class.java).apply {
+                action = ACTION_START_COLLECTION
+            }
+            context.startForegroundService(intent)
+        }
+
+        fun stop(context: Context) {
+            val intent = Intent(context, CollectorService::class.java).apply {
+                action = ACTION_STOP_COLLECTION
+            }
+            context.startService(intent)
+        }
+    }
+}

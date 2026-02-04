@@ -86,6 +86,20 @@
 - Создан BleDataAggregator для буферизации и пакетной записи в БД
 - Реализована обработка ошибок и проверки доступности Bluetooth
 
-**Статус:** BLE-сканирование готово, переходим к Foreground Service
+#### ✅ Шаг 7: CollectorService - Foreground Service (ЗАВЕРШЕН)
+- Создан CollectorService (extends Service)
+- Реализован foreground notification с каналом "Activity Collection"
+- Координация всех сборщиков данных:
+  - SensorCollector (акселерометр, гироскоп, барометр, магнитометр)
+  - BleScanner (BLE-метки)
+  - WearStateTracker (on/off-wrist)
+- Использование CoroutineScope с SupervisorJob для параллельного сбора
+- Реализованы START_STICKY и обработка ACTION_START/STOP_COLLECTION
+- Обновлен AndroidManifest.xml:
+  - Добавлены все необходимые разрешения (Bluetooth, сенсоры, сеть)
+  - Зарегистрирован CollectorService с foregroundServiceType
+  - Добавлены требуемые hardware features
 
-**Следующий шаг:** Создание CollectorService для координации всех сборщиков
+**Статус:** Foreground Service готов, переходим к Heart Rate сбору
+
+**Следующий шаг:** Добавление HeartRateCollector для сбора данных пульса
