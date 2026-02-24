@@ -1,21 +1,21 @@
 [versions]
-agp = "9.0.0"
-playServicesWearable = "18.0.0"
-kotlin = "2.0.21"
-composeBom = "2024.09.00"
-composeMaterial = "1.2.1"
-composeFoundation = "1.2.1"
+agp = "9.0.1"
+playServicesWearable = "18.2.0"
+kotlin = "2.2.10"
+composeBom = "2024.12.01"
+composeMaterial = "1.4.0"
+composeFoundation = "1.4.0"
 wearToolingPreview = "1.0.0"
-activityCompose = "1.8.0"
+activityCompose = "1.9.3"
 coreSplashscreen = "1.0.1"
 room = "2.6.1"
-lifecycle = "2.7.0"
-workManager = "2.9.0"
+lifecycle = "2.8.7"
+workManager = "2.9.1"
 okhttp = "4.12.0"
-retrofit = "2.9.0"
-tink = "1.12.0"
-coroutines = "1.8.0"
-ksp = "2.0.21-1.0.25"
+retrofit = "2.11.0"
+tink = "1.15.0"
+coroutines = "1.9.0"
+ksp = "2.2.10-2.0.2"
 
 [libraries]
 play-services-wearable = { group = "com.google.android.gms", name = "play-services-wearable", version.ref = "playServicesWearable" }
@@ -47,6 +47,7 @@ coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutin
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 

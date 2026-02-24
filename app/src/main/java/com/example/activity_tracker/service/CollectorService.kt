@@ -26,6 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 /**
  * Foreground Service для непрерывного сбора данных с сенсоров, BLE и wear-событий
@@ -99,7 +100,7 @@ class CollectorService : Service() {
             serviceScope.launch {
                 sensorAggregator.collectAndStore(
                     sensorCollector.collectAccelerometer(),
-                    this
+                    serviceScope
                 )
             }
         )
@@ -109,7 +110,7 @@ class CollectorService : Service() {
             serviceScope.launch {
                 sensorAggregator.collectAndStore(
                     sensorCollector.collectGyroscope(),
-                    this
+                    serviceScope
                 )
             }
         )
@@ -119,7 +120,7 @@ class CollectorService : Service() {
             serviceScope.launch {
                 sensorAggregator.collectAndStore(
                     sensorCollector.collectBarometer(),
-                    this
+                    serviceScope
                 )
             }
         )
@@ -129,7 +130,7 @@ class CollectorService : Service() {
             serviceScope.launch {
                 sensorAggregator.collectAndStore(
                     sensorCollector.collectMagnetometer(),
-                    this
+                    serviceScope
                 )
             }
         )
@@ -138,8 +139,8 @@ class CollectorService : Service() {
         collectionJobs.add(
             serviceScope.launch {
                 bleAggregator.collectAndStore(
-                    bleScanner.scanBeacons(this),
-                    this
+                    bleScanner.scanBeacons(serviceScope),
+                    serviceScope
                 )
             }
         )
@@ -149,7 +150,7 @@ class CollectorService : Service() {
             serviceScope.launch {
                 wearAggregator.collectAndStore(
                     wearStateTracker.trackWearState(),
-                    this
+                    serviceScope
                 )
             }
         )
@@ -159,7 +160,7 @@ class CollectorService : Service() {
             serviceScope.launch {
                 heartRateAggregator.collectAndStore(
                     heartRateCollector.collectHeartRate(),
-                    this
+                    serviceScope
                 )
             }
         )
@@ -169,7 +170,7 @@ class CollectorService : Service() {
             serviceScope.launch {
                 batteryAggregator.collectAndStore(
                     batteryTracker.trackBattery(),
-                    this
+                    serviceScope
                 )
             }
         )
