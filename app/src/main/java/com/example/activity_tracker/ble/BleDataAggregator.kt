@@ -61,6 +61,8 @@ class BleDataAggregator(
         try {
             repository.saveBle(toSave)
             Log.d(TAG, "Saved ${toSave.size} BLE events")
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Error saving BLE events", e)
             bleBuffer.addAll(toSave) // Возврат в буфер при ошибке

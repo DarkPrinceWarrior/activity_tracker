@@ -96,6 +96,8 @@ class SensorDataAggregator(
         try {
             repository.saveSensor(toSave)
             Log.d(TAG, "Saved ${toSave.size} sensor samples")
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Error saving sensor samples", e)
             sensorBuffer.addAll(toSave) // Возврат в буфер при ошибке
@@ -109,6 +111,8 @@ class SensorDataAggregator(
         try {
             repository.saveBaro(toSave)
             Log.d(TAG, "Saved ${toSave.size} barometer samples")
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Error saving barometer samples", e)
             baroBuffer.addAll(toSave)
@@ -122,6 +126,8 @@ class SensorDataAggregator(
         try {
             repository.saveMag(toSave)
             Log.d(TAG, "Saved ${toSave.size} magnetometer samples")
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Error saving magnetometer samples", e)
             magBuffer.addAll(toSave)
