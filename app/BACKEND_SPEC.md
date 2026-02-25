@@ -119,6 +119,8 @@ app/
 
 ### 3.1. Таблица `devices` — Зарегистрированные устройства
 
+> **Дополнительные поля** (serial_number, total_bindings_count, total_on_site_hours, charge_status и др.) **описаны в разделе 19.6.**
+
 | Поле | Тип | Описание |
 |------|-----|----------|
 | `id` | UUID, PK | Внутренний ID |
@@ -128,7 +130,7 @@ app/
 | `firmware` | VARCHAR(64) | Версия прошивки |
 | `app_version` | VARCHAR(32) | Версия приложения на часах |
 | `employee_id` | UUID, FK → employees.id, NULLABLE | Привязка к сотруднику |
-| `site_id` | VARCHAR(64), NULLABLE | Текущий объект/площадка |
+| `site_id` | VARCHAR(64), FK → sites.id, NULLABLE | Текущий объект/площадка |
 | `status` | ENUM('active','revoked','suspended') | Статус устройства |
 | `last_heartbeat_at` | TIMESTAMPTZ, NULLABLE | Последний heartbeat |
 | `last_sync_at` | TIMESTAMPTZ, NULLABLE | Последняя синхронизация |
@@ -139,14 +141,22 @@ app/
 
 ### 3.2. Таблица `employees` — Сотрудники
 
+> **Полная расширенная схема таблицы `employees` (согласно ТЗ, таблица 3) описана в разделе 19.1.**
+> Включает: `company_id`, `pass_number` (RFID), `personnel_number` (табельный), `brigade_id`, `site_id`, `consent_pd_file` (ФЗ-152) и другие поля.
+
+Краткая версия ключевых полей:
+
 | Поле | Тип | Описание |
 |------|-----|----------|
 | `id` | UUID, PK | ID сотрудника |
-| `external_id` | VARCHAR(128), UNIQUE | Внешний ID (из HR-системы) |
-| `full_name` | VARCHAR(256) | ФИО |
+| `full_name` | VARCHAR(256), NOT NULL | ФИО |
+| `company_id` | UUID, FK → companies.id, NULLABLE | Компания/подрядчик |
 | `position` | VARCHAR(128), NULLABLE | Должность |
-| `department` | VARCHAR(128), NULLABLE | Подразделение |
-| `status` | ENUM('active','inactive') | Статус |
+| `personnel_number` | VARCHAR(64), NULLABLE, UNIQUE | Табельный номер |
+| `pass_number` | VARCHAR(64), NULLABLE | Номер пропуска (RFID) |
+| `brigade_id` | UUID, FK → brigades.id, NULLABLE | Бригада |
+| `site_id` | VARCHAR(64), FK → sites.id, NULLABLE | Площадка |
+| `status` | VARCHAR(16), DEFAULT 'active' | 'active', 'inactive', 'archived' |
 | `created_at` | TIMESTAMPTZ | Дата создания |
 | `updated_at` | TIMESTAMPTZ | Дата обновления |
 | `is_deleted` | BOOLEAN, DEFAULT false | Мягкое удаление |
@@ -322,7 +332,9 @@ app/
 | `ts_ms` | BIGINT, NOT NULL | Метка времени |
 | `level` | REAL, NOT NULL | Уровень заряда (0.0 .. 1.0) |
 
-#### 3.6.9. `downtime_reasons` — Причины простоя
+#### 3.6.9. `downtime_reasons` — Причины простоя (сырые события из пакета)
+
+> Это **сырые данные** из расшифрованного пакета. Справочник причин — в `downtime_reasons_catalog` (раздел 19.4). Привязка к интервалам В1 — в `downtime_assignments` (раздел 22).
 
 | Поле | Тип | Описание |
 |------|-----|----------|
@@ -833,7 +845,9 @@ app/
 }
 ```
 
-### 4.6. Аналитика
+### 4.6. Аналитика (базовая)
+
+> **Расширенная аналитика с классификацией A1-В4, выработкой (%), временем реакции и V1% описана в разделе 17.**
 
 #### 4.6.1. `GET /api/v1/analytics/device/{device_id}/summary` — Сводка по устройству
 
@@ -1893,95 +1907,9 @@ def sample_upload_request():
 
 ## 12. План итераций реализации backend
 
-### Итерация B1 — Ядро: приём пакетов (1-2 недели)
-
-**Цель:** Часы могут отправлять пакеты на сервер и получать 202 Accepted.
-
-- [ ] Инициализация проекта FastAPI + Docker + PostgreSQL + Redis
-- [ ] Alembic миграции для таблиц: `devices`, `packets`, `idempotency_keys`, `packet_processing_log`
-- [ ] Pydantic-схемы: `UploadPacketRequest`, `UploadPacketResponse`, `PacketStatusResponse`
-- [ ] `POST /api/v1/watch/packets` — приём, валидация, сохранение, идемпотентность
-- [ ] `GET /api/v1/watch/packets/{packet_id}` — проверка статуса
-- [ ] Middleware: CORS, request logging, error handling
-- [ ] Тесты: приём пакетов, идемпотентность, валидация
-- [ ] docker-compose запуск (api + db + redis)
-
-**Критерий готовности:** curl/httpx могут отправить пакет и получить 202. Повтор → 409.
-
-### Итерация B2 — Аутентификация устройств (1 неделя)
-
-**Цель:** Устройства регистрируются и получают JWT-токены.
-
-- [ ] Таблицы: `employees`, `device_tokens`, `registration_codes`
-- [ ] `POST /api/v1/auth/device/register` — регистрация + выдача device_secret
-- [ ] `POST /api/v1/auth/device/token` — выдача JWT access_token
-- [ ] `POST /api/v1/auth/device/refresh` — обновление токена
-- [ ] JWT dependency для FastAPI (проверка токена в каждом запросе)
-- [ ] Проверка `device_id` из токена vs `device_id` из тела запроса
-- [ ] `POST /api/v1/auth/device/revoke` — отзыв устройства
-- [ ] Тесты аутентификации
-
-**Критерий готовности:** Часы регистрируются, получают токен, отправляют пакет с `Authorization: Bearer`.
-
-### Итерация B3 — Криптография и обработка (1-2 недели)
-
-**Цель:** Сервер расшифровывает пакеты и сохраняет сырые данные.
-
-- [ ] Таблицы сенсорных данных (9 таблиц), таблица `shifts`, таблица `crypto_keys`
-- [ ] `crypto_service.py` — генерация RSA-ключей, расшифровка пакетов
-- [ ] Celery task `decrypt_and_parse_packet`
-- [ ] Batch INSERT сенсорных данных в PostgreSQL
-- [ ] `GET /api/v1/admin/crypto/public-key` — отдача публичного ключа
-- [ ] `POST /api/v1/admin/crypto/rotate-key` — ротация ключей
-- [ ] Крипто-тесты (совместимость с Kotlin CryptoManager)
-- [ ] Интеграционный тест: шифрование на Python → расшифровка → проверка
-
-**Критерий готовности:** Зашифрованный пакет от часов расшифровывается, данные в БД. Тест с реальным вектором от Kotlin-приложения проходит.
-
-### Итерация B4 — Heartbeat и управление (1 неделя)
-
-**Цель:** Мониторинг устройств и административные функции.
-
-- [ ] `POST /api/v1/watch/heartbeat` — пульс устройства + синхронизация времени
-- [ ] `GET /api/v1/devices` — список устройств с фильтрами и пагинацией
-- [ ] `GET /api/v1/devices/{device_id}` — детали
-- [ ] `PATCH /api/v1/devices/{device_id}` — обновление
-- [ ] `POST /api/v1/devices/{device_id}/bind` — привязка к сотруднику
-- [ ] CRUD для сотрудников (employees)
-- [ ] Celery Beat: очистка idempotency_keys, проверка здоровья устройств
-
-**Критерий готовности:** Администратор видит список устройств, их статусы, может управлять привязками.
-
-### Итерация B5 — Смены, данные и аналитика (1-2 недели)
-
-**Цель:** Доступ к сменам, сырым данным и базовая аналитика.
-
-- [ ] `GET /api/v1/shifts` — список смен с фильтрами
-- [ ] `GET /api/v1/shifts/{shift_id}` — детали
-- [ ] `GET /api/v1/shifts/{shift_id}/data/{type}` — сырые данные с пагинацией
-- [ ] `GET /api/v1/analytics/device/{id}/summary` — сводка по устройству
-- [ ] `GET /api/v1/analytics/employee/{id}/summary` — сводка по сотруднику
-- [ ] `GET /api/v1/analytics/zones` — аналитика BLE-зон
-- [ ] `GET /api/v1/admin/stats` — общая статистика
-- [ ] `GET /api/v1/admin/packets` — лог пакетов
-- [ ] `POST /api/v1/admin/packets/{id}/reprocess` — повторная обработка
-- [ ] CSV экспорт для сырых данных
-
-**Критерий готовности:** Полное API для администратора и аналитической системы.
-
-### Итерация B6 — Безопасность, нагрузка и продакшн (1 неделя)
-
-**Цель:** Подготовка к production-развёртыванию.
-
-- [ ] Rate limiting (slowapi) — 10 req/min на device_id
-- [ ] Проверка размера payload (max 50 MB)
-- [ ] HTTPS (TLS 1.2+), опционально certificate pinning
-- [ ] Structured logging (structlog)
-- [ ] Health check endpoint (`GET /health`)
-- [ ] Нагрузочное тестирование: 100 устройств × 2 пакета/день
-- [ ] Очистка старых данных (retention policy)
-- [ ] Документация Swagger/OpenAPI финализация
-- [ ] CI/CD pipeline (GitHub Actions / GitLab CI)
+> **⚠️ Этот раздел заменён обновлённым планом в разделе 25.**
+> Раздел 25 включает дополнительные итерации B4-B7 для справочников, RBAC, классификации A1-В4, аналитики, антифрода и GATEWAY-режима.
+> **Общая оценка: 9-14 недель (2-3.5 месяца), 7 итераций (B1-B7).**
 
 ---
 
@@ -2038,13 +1966,16 @@ def sample_upload_request():
 1. **Admin UI** — нужен ли web-интерфейс (React/Vue) или достаточно REST API + Swagger?
 2. **Webhook/Push** — нужны ли уведомления о новых пакетах (WebSocket, SSE)?
 3. **Multi-tenancy** — одна компания или несколько (site_id достаточно)?
-4. **Классификация активности** — A/B/C классы обрабатываются на backend? Если да, нужна ML-модель.
+4. ~~**Классификация активности** — A/B/C классы обрабатываются на backend?~~ → ✅ **Решено в разделе 15** (Rule-Based + опциональный ML)
 5. **Экспорт данных** — какие форматы кроме JSON/CSV (Excel, Parquet)?
 6. **Retention policy** — подтвердить сроки хранения (90/365 дней).
 7. **SLA** — uptime требования (99.9%?), допустимое время недоступности.
 8. **Масштабирование** — ожидаемое количество устройств (10/100/1000+)?
 9. **Резервное копирование** — политика бэкапов PostgreSQL.
-10. **GATEWAY-режим** — реализовывать ли эндпоинт для мобильного шлюза (`POST /api/v1/gateway/packets`)?
+10. ~~**GATEWAY-режим** — реализовывать ли эндпоинт для мобильного шлюза?~~ → ✅ **Решено в разделе 23** (`POST /api/v1/gateway/packets`)
+11. **Калибровка порогов классификации** — нужны ли реальные данные с площадки для подбора порогов (accel_energy_high, gyro_energy_high и др.) в разделе 15?
+12. **Матрица расстояний зон** — нужна ли для проверки IMPOSSIBLE_MOVE (раздел 18)? Или достаточно фиксированного min_travel_time_sec?
+13. **ML-модель** — планируется ли фаза 2 с обучением модели (раздел 15.2.2)? Если да, кто размечает данные?
 
 ---
 
