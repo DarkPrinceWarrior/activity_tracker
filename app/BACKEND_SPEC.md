@@ -59,42 +59,70 @@ Wear OS приложение (Kotlin) уже реализовано:
 app/
 ├── api/                    # Роутеры FastAPI
 │   ├── v1/
-│   │   ├── packets.py      # Приём и статус пакетов
-│   │   ├── devices.py      # Регистрация и управление устройствами
-│   │   ├── shifts.py       # Смены и данные
-│   │   ├── auth.py         # Аутентификация устройств
-│   │   ├── heartbeat.py    # Heartbeat устройств
-│   │   ├── analytics.py    # Аналитика и отчёты
-│   │   ├── admin.py        # Административные эндпоинты
-│   │   └── keys.py         # Управление криптоключами
-│   └── deps.py             # Зависимости (DI)
+│   │   ├── packets.py      # Приём и статус пакетов (раздел 4.2)
+│   │   ├── gateway.py      # GATEWAY-режим (раздел 23)
+│   │   ├── devices.py      # Управление устройствами (раздел 4.4)
+│   │   ├── shifts.py       # Смены и данные (раздел 4.5)
+│   │   ├── auth.py         # Аутентификация: устройства (4.1) + web (20.4)
+│   │   ├── heartbeat.py    # Heartbeat устройств (раздел 4.3)
+│   │   ├── analytics.py    # Аналитика: базовая (4.6) + расширенная (17.4)
+│   │   ├── zones.py        # Зоны, маршруты (раздел 16.3)
+│   │   ├── employees.py    # Справочник сотрудников (раздел 19.7)
+│   │   ├── companies.py    # Компании и бригады (раздел 19.7)
+│   │   ├── bindings.py     # Привязки часов (раздел 19.5)
+│   │   ├── anomalies.py    # Аномалии (раздел 18.5)
+│   │   ├── users.py        # Управление пользователями (раздел 20.4)
+│   │   ├── audit.py        # Журнал аудита (раздел 20.4)
+│   │   ├── admin.py        # Административные эндпоинты (раздел 4.7)
+│   │   └── keys.py         # Управление криптоключами (раздел 4.7.5-4.7.6)
+│   └── deps.py             # Зависимости (DI), RBAC middleware (раздел 20.3)
 ├── core/
 │   ├── config.py           # Настройки (Pydantic Settings)
 │   ├── security.py         # JWT, хеширование, криптография
+│   ├── rbac.py             # require_role, require_scope, anonymize (раздел 20.3.2)
 │   └── exceptions.py       # Кастомные исключения
 ├── models/                 # SQLAlchemy модели
-│   ├── device.py
-│   ├── packet.py
-│   ├── shift.py
-│   ├── sensor_data.py
-│   ├── idempotency.py
-│   └── crypto_key.py
+│   ├── device.py           # devices, device_tokens, device_bindings
+│   ├── packet.py           # packets, idempotency_keys
+│   ├── shift.py            # shifts
+│   ├── sensor_data.py      # 9 таблиц сенсорных данных
+│   ├── zone.py             # sites, zones, zone_beacons, zone_visits, unknown_beacons
+│   ├── activity.py         # activity_intervals, classification_configs
+│   ├── metrics.py          # shift_metrics, reaction_times
+│   ├── anomaly.py          # anomalies
+│   ├── employee.py         # employees, companies, brigades
+│   ├── user.py             # users, audit_log
+│   ├── downtime.py         # downtime_reasons_catalog, downtime_assignments
+│   ├── quality.py          # data_quality_flags
+│   └── crypto_key.py       # crypto_keys
 ├── schemas/                # Pydantic схемы (request/response)
 │   ├── packet.py
 │   ├── device.py
 │   ├── shift.py
 │   ├── auth.py
-│   └── analytics.py
+│   ├── analytics.py
+│   ├── zone.py
+│   ├── activity.py
+│   ├── anomaly.py
+│   └── employee.py
 ├── services/               # Бизнес-логика
 │   ├── packet_service.py
 │   ├── crypto_service.py
 │   ├── device_service.py
 │   ├── shift_service.py
+│   ├── zone_service.py
+│   ├── classification_service.py
+│   ├── metrics_service.py
+│   ├── anomaly_service.py
 │   └── analytics_service.py
-├── tasks/                  # Celery задачи
-│   ├── decrypt_task.py
-│   ├── parse_task.py
-│   └── analytics_task.py
+├── tasks/                  # Celery задачи (раздел 6, 15-18, 21-22, 24)
+│   ├── decrypt_task.py     # decrypt_and_parse_packet
+│   ├── quality_task.py     # check_data_quality
+│   ├── zone_task.py        # build_zone_visits
+│   ├── classify_task.py    # classify_activity
+│   ├── metrics_task.py     # calculate_shift_metrics
+│   ├── anomaly_task.py     # detect_anomalies
+│   └── cleanup_task.py     # cleanup_idempotency_keys, cleanup_old_data
 ├── db/
 │   ├── session.py          # Async session factory
 │   └── base.py             # Base model
@@ -104,6 +132,10 @@ app/
 │   ├── test_packets.py
 │   ├── test_crypto.py
 │   ├── test_devices.py
+│   ├── test_classification.py
+│   ├── test_metrics.py
+│   ├── test_anomalies.py
+│   ├── test_rbac.py
 │   └── conftest.py
 ├── main.py                 # Точка входа FastAPI
 ├── celery_app.py           # Конфигурация Celery
@@ -171,7 +203,7 @@ app/
 | `shift_start_ts` | BIGINT, NOT NULL | Начало смены (Unix ms) |
 | `shift_end_ts` | BIGINT, NOT NULL | Конец смены (Unix ms) |
 | `schema_version` | INTEGER, NOT NULL | Версия схемы пакета |
-| `status` | ENUM('accepted','decrypting','parsing','processed','error') | Статус обработки |
+| `status` | ENUM('accepted','decrypting','parsing','processing','processed','error') | Статус обработки |
 | `payload_enc` | TEXT, NOT NULL | Зашифрованный payload (Base64) |
 | `payload_key_enc` | TEXT, NOT NULL | Зашифрованный AES-ключ (Base64) |
 | `iv` | VARCHAR(64), NOT NULL | IV для AES-GCM (Base64) |
@@ -183,6 +215,8 @@ app/
 | `processing_finished_at` | TIMESTAMPTZ, NULLABLE | Конец обработки |
 | `received_at` | TIMESTAMPTZ, NOT NULL | Время приёма |
 | `created_at` | TIMESTAMPTZ | Дата создания |
+| `uploaded_from` | VARCHAR(16), DEFAULT 'direct' | Источник: 'direct' (часы) или 'gateway' (шлюз), см. раздел 23 |
+| `operator_id` | UUID, FK → users.id, NULLABLE | Оператор, загрузивший пакет (только для gateway) |
 | `updated_at` | TIMESTAMPTZ | Дата обновления |
 
 **Индексы:**
@@ -213,7 +247,7 @@ app/
 | `packet_id` | VARCHAR(64), FK → packets.packet_id | Связь с пакетом |
 | `device_id` | VARCHAR(64), FK → devices.device_id | Устройство |
 | `employee_id` | UUID, FK → employees.id, NULLABLE | Сотрудник |
-| `site_id` | VARCHAR(64), NULLABLE | Объект |
+| `site_id` | VARCHAR(64), FK → sites.id, NULLABLE | Объект/площадка |
 | `start_ts_ms` | BIGINT, NOT NULL | Начало смены (Unix ms UTC) |
 | `end_ts_ms` | BIGINT, NOT NULL | Конец смены (Unix ms UTC) |
 | `duration_minutes` | INTEGER | Длительность в минутах |
@@ -702,9 +736,11 @@ app/
 
 ### 4.4. Управление устройствами
 
+> **Доступ:** web-токен, роли `admin`, `operator` (своя площадка), `manager` (read-only). См. RBAC в разделе 20.
+
 #### 4.4.1. `GET /api/v1/devices` — Список устройств
 
-**Доступ:** Admin.
+**Доступ:** admin, operator, manager (read-only).
 
 **Query параметры:**
 - `status` — фильтр по статусу ('active', 'revoked', 'suspended')
@@ -736,13 +772,13 @@ app/
 
 #### 4.4.2. `GET /api/v1/devices/{device_id}` — Детали устройства
 
-**Доступ:** Admin.
+**Доступ:** admin, operator, manager.
 
 **Response 200:** Полная информация об устройстве + статистика последних пакетов.
 
 #### 4.4.3. `PATCH /api/v1/devices/{device_id}` — Обновление устройства
 
-**Доступ:** Admin.
+**Доступ:** admin.
 
 **Request Body (все поля опциональны):**
 ```json
@@ -757,7 +793,7 @@ app/
 
 #### 4.4.4. `POST /api/v1/devices/{device_id}/bind` — Привязка к сотруднику
 
-**Доступ:** Admin.
+**Доступ:** admin, operator (своя площадка).
 
 **Request Body:**
 ```json
@@ -770,7 +806,8 @@ app/
 **Логика:**
 1. Проверить что сотрудник существует и активен.
 2. Обновить devices.employee_id и devices.site_id.
-3. Записать лог привязки.
+3. Создать запись в `device_bindings` (см. раздел 19.5).
+4. Записать в `audit_log` (см. раздел 20.2.2).
 
 ### 4.5. Смены и данные
 
@@ -1169,14 +1206,18 @@ DELETE FROM idempotency_keys WHERE expires_at < NOW();
 - `RETENTION_DAYS_RAW_DATA` = 90 (сырые сенсорные данные)
 - `RETENTION_DAYS_PACKETS` = 365 (пакеты)
 - `RETENTION_DAYS_SHIFTS` = 365 (смены)
+- `RETENTION_DAYS_AUDIT_LOG` = 180 (журнал аудита, согласно ТЗ, п. 7)
 
-### 6.4. `generate_shift_analytics` — Генерация аналитики
+### 6.4. Конвейер аналитических задач (после decrypt_and_parse_packet)
 
-**Запуск:** После успешного `decrypt_and_parse_packet`.
+> **⚠️ Этот раздел расширен. Полная схема конвейера — в разделе 24.**
 
-**Логика:**
-1. Подсчёт агрегатов по смене (средний пульс, время ношения, зоны).
-2. Обновление сводной статистики.
+**Порядок запуска после `decrypt_and_parse_packet`:**
+1. `check_data_quality` → флаги качества (раздел 21)
+2. `build_zone_visits` → BLE → зоны, маршрут (раздел 16)
+3. `classify_activity` → A1/A2/B1/B2/V1/V2/V3/V4 (раздел 15)
+4. `calculate_shift_metrics` → выработка, V1%, время реакции (раздел 17)
+5. `detect_anomalies` → 7 типов проверок (раздел 18)
 
 ### 6.5. Celery Beat расписание
 
@@ -1442,6 +1483,7 @@ IDEMPOTENCY_KEY_TTL_DAYS=30
 RETENTION_DAYS_RAW_DATA=90
 RETENTION_DAYS_PACKETS=365
 RETENTION_DAYS_SHIFTS=365
+RETENTION_DAYS_AUDIT_LOG=180
 
 # === CORS ===
 CORS_ORIGINS=["http://localhost:3000"]
@@ -3306,13 +3348,35 @@ def anonymize_for_analyst(data: dict):
 ## 25. Обновлённые итерации реализации
 
 ### Итерация B1 — Инфраструктура и приём пакетов (1-2 недели)
-_(без изменений, см. раздел 12)_
+
+- [ ] Инициализация FastAPI + Docker + PostgreSQL + Redis
+- [ ] Alembic миграции: `devices`, `packets`, `idempotency_keys`, `packet_processing_log`
+- [ ] `POST /api/v1/watch/packets` — приём, валидация, идемпотентность (раздел 4.2)
+- [ ] `GET /api/v1/watch/packets/{packet_id}` — статус
+- [ ] Middleware: CORS, logging, error handling
+- [ ] docker-compose (api + db + redis)
+- [ ] Тесты приёма пакетов
+
+**Критерий:** curl отправляет пакет → 202. Повтор → 409.
 
 ### Итерация B2 — Аутентификация устройств (1 неделя)
-_(без изменений, см. раздел 12)_
+
+- [ ] Таблицы: `device_tokens`, `registration_codes`
+- [ ] Регистрация, токены, refresh, revoke (раздел 4.1)
+- [ ] JWT dependency для FastAPI
+- [ ] Тесты аутентификации
+
+**Критерий:** Часы регистрируются, получают токен, отправляют пакет с `Authorization: Bearer`.
 
 ### Итерация B3 — Криптография и парсинг (1-2 недели)
-_(без изменений, см. раздел 12)_
+
+- [ ] Таблицы сенсорных данных (9 таблиц), `shifts`, `crypto_keys`
+- [ ] `crypto_service.py` — RSA-ключи, расшифровка (раздел 5)
+- [ ] Celery: `decrypt_and_parse_packet` (раздел 6.1)
+- [ ] Batch INSERT сенсорных данных
+- [ ] Крипто-тесты (совместимость с Kotlin CryptoManager)
+
+**Критерий:** Зашифрованный пакет расшифровывается, данные в БД.
 
 ### Итерация B4 — Справочники и RBAC (1-2 недели)
 
