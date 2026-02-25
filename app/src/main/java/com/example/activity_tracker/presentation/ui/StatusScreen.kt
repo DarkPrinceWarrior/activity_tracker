@@ -17,6 +17,7 @@ fun StatusScreen(
     isCollecting: Boolean,
     pendingPackets: Int,
     uploadedPackets: Int,
+    errorPackets: Int = 0,
     onStartClick: () -> Unit,
     onStopClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -73,6 +74,15 @@ fun StatusScreen(
                     text = "Отправлено: $uploadedPackets пак.",
                     style = MaterialTheme.typography.caption1,
                     color = MaterialTheme.colors.primary,
+                    textAlign = TextAlign.Center
+                )
+            }
+
+            if (errorPackets > 0) {
+                Text(
+                    text = "Ошибка: $errorPackets пак.",
+                    style = MaterialTheme.typography.caption1,
+                    color = MaterialTheme.colors.error,
                     textAlign = TextAlign.Center
                 )
             }

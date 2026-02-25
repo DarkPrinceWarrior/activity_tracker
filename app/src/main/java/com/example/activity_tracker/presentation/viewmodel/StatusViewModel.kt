@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.activity_tracker.ActivityTrackerApp
+import com.example.activity_tracker.network.UploadWorker
 import com.example.activity_tracker.packet.PacketPipeline
 import com.example.activity_tracker.service.CollectorService
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -36,6 +37,11 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
         .map { it.size }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
+    val errorPacketsCount: StateFlow<Int> = repository
+        .observeQueue(PacketPipeline.STATUS_ERROR)
+        .map { it.size }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
     fun startCollection() {
         viewModelScope.launch {
             _shiftStartTs.value = System.currentTimeMillis()
@@ -59,6 +65,7 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
                         "StatusViewModel",
                         "Packet created: ${result.packetId}, size=${result.payloadSizeBytes}B"
                     )
+                    UploadWorker.schedule(getApplication())
                 }
             }
         }

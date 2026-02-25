@@ -68,11 +68,13 @@ fun ActivityTrackerApp(viewModel: StatusViewModel) {
     val isCollecting by viewModel.isCollecting.collectAsState()
     val pendingPackets by viewModel.pendingPacketsCount.collectAsState()
     val uploadedPackets by viewModel.uploadedPacketsCount.collectAsState()
+    val errorPackets by viewModel.errorPacketsCount.collectAsState()
 
     StatusScreen(
         isCollecting = isCollecting,
         pendingPackets = pendingPackets,
         uploadedPackets = uploadedPackets,
+        errorPackets = errorPackets,
         onStartClick = { viewModel.startCollection() },
         onStopClick = { viewModel.stopCollection() }
     )

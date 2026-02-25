@@ -2,6 +2,7 @@ package com.example.activity_tracker.data.repository
 
 import com.example.activity_tracker.data.local.AppDatabase
 import com.example.activity_tracker.data.local.entity.*
+import com.example.activity_tracker.packet.PacketPipeline
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -50,6 +51,19 @@ class SamplesRepositoryImpl(
 
     override fun observeQueue(status: String): Flow<List<PacketQueueEntity>> =
         db.packetQueueDao().byStatusFlow(status)
+
+    override suspend fun updatePacketStatus(
+        packetId: String,
+        status: String,
+        attempt: Int,
+        error: String?
+    ) = withContext(io) {
+        db.packetQueueDao().updateStatus(packetId, status, attempt, error)
+    }
+
+    override suspend fun getPendingPackets(): List<PacketQueueEntity> = withContext(io) {
+        db.packetQueueDao().byStatus(PacketPipeline.STATUS_PENDING)
+    }
 
     override suspend fun getSensorRange(from: Long, to: Long): List<SensorSampleEntity> = withContext(io) {
         db.sensorDao().range(from, to)

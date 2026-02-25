@@ -212,3 +212,64 @@
 **Статус:** Готовы к Итерации 3 — сетевая синхронизация (NetworkUploader, WorkManager)
 
 **Следующий шаг:** NetworkUploader — отправка пакетов на сервер (DIRECT)
+
+---
+
+## ИТЕРАЦИЯ 3 — Сетевая синхронизация (DIRECT, mock)
+
+### 2026-02-25 - Итерация 3
+
+#### ✅ Шаг 15: WatchApiService — Retrofit-интерфейс и модели (ЗАВЕРШЕН)
+- Созданы модели в `network/model/UploadRequest.kt`:
+  - `UploadRequest` — тело POST /api/v1/watch/packets (packet_id, device_id, shift_ts, payload_enc, iv, hash)
+  - `UploadResponse` — ответ 202 Accepted (packet_id, status, server_time)
+  - `PacketStatusResponse` — ответ GET статуса пакета
+- Создан `network/WatchApiService.kt` — Retrofit-интерфейс:
+  - `uploadPacket()` с заголовками Authorization и Idempotency-Key
+  - `getPacketStatus()` для проверки статуса пакета
+- Создан `network/NetworkClient.kt` — singleton Retrofit+OkHttp:
+  - BASE_URL = placeholder (TODO: заменить на реальный URL)
+  - HttpLoggingInterceptor для отладки
+  - Таймауты: connect=30s, read/write=60s
+
+#### ✅ Шаг 16: NetworkUploader — отправка с ретраями (ЗАВЕРШЕН)
+- Создан `network/NetworkUploader.kt`:
+  - `upload(packet)` — обновляет статус pending→uploading, отправляет, обновляет uploaded/error
+  - Обработка кодов 202/409 (успех), 400/422 (ошибка без ретрая), 401/403 (стоп), 5xx (retry)
+  - `mockUpload()` — симулирует 202 Accepted с задержкой 500мс (TODO: заменить на apiService.uploadPacket)
+  - Экспоненциальный backoff: 1, 2, 5, 10, 30, 60 мин (секция 10 плана)
+- Добавлены `updatePacketStatus()` и `getPendingPackets()` в SamplesRepository/Impl
+
+#### ✅ Шаг 17: UploadWorker — WorkManager фоновая отправка (ЗАВЕРШЕН)
+- Создан `network/UploadWorker.kt`:
+  - Constraint: NetworkType.CONNECTED
+  - Обрабатывает все pending-пакеты из очереди
+  - Result.retry() при временных ошибках (shouldRetry=true)
+  - `schedule(context)` — idempotent (ExistingWorkPolicy.REPLACE)
+  - Вызывается автоматически из StatusViewModel после buildAndEnqueue()
+
+#### ✅ Шаг 18: UI — статус отправки (ЗАВЕРШЕН)
+- Обновлён StatusViewModel:
+  - `errorPacketsCount: StateFlow<Int>` — наблюдение за ошибками
+  - `UploadWorker.schedule()` вызывается после успешного buildAndEnqueue()
+- Обновлён StatusScreen:
+  - "Ошибка: N пак." — красный цвет при ошибках отправки
+- Обновлён MainActivity: передача errorPackets
+
+---
+
+## 🎉 ИТЕРАЦИЯ 3 ЗАВЕРШЕНА (mock)! 🎉
+
+Готова система сетевой синхронизации с заглушкой:
+- ✅ WatchApiService — Retrofit POST /api/v1/watch/packets
+- ✅ NetworkUploader — отправка + ретраи + обновление статусов
+- ✅ UploadWorker (WorkManager) — гарантированная фоновая отправка
+- ✅ UI показывает pending/uploaded/error статусы пакетов
+
+**TODO до реального сервера:**
+1. Заменить `NetworkClient.BASE_URL` на реальный URL
+2. Заменить `mockUpload()` на `apiService.uploadPacket()` в NetworkUploader
+3. Реализовать получение `access_token` для Authorization header
+4. Заменить заглушку публичного ключа в CryptoManager.getServerPublicKeyBytes()
+
+**Следующий шаг:** Ждём готовности сервера или переходим к улучшениям UI/UX

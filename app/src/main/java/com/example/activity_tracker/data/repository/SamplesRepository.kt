@@ -15,6 +15,8 @@ interface SamplesRepository {
 
     suspend fun enqueuePacket(item: PacketQueueEntity)
     fun observeQueue(status: String): Flow<List<PacketQueueEntity>>
+    suspend fun updatePacketStatus(packetId: String, status: String, attempt: Int, error: String?)
+    suspend fun getPendingPackets(): List<PacketQueueEntity>
 
     suspend fun getSensorRange(from: Long, to: Long): List<SensorSampleEntity>
     suspend fun getBleRange(from: Long, to: Long): List<BleEventEntity>
