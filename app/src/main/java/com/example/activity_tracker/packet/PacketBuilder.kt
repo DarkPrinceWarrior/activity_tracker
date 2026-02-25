@@ -3,7 +3,6 @@ package com.example.activity_tracker.packet
 import android.content.Context
 import android.os.Build
 import android.util.Log
-import com.example.activity_tracker.BuildConfig
 import com.example.activity_tracker.data.repository.SamplesRepository
 import com.example.activity_tracker.packet.model.AccelSample
 import com.example.activity_tracker.packet.model.BatterySample
@@ -125,9 +124,16 @@ class PacketBuilder(
         device_id = getDeviceId(),
         model = "${Build.MANUFACTURER} ${Build.MODEL}",
         fw = Build.VERSION.RELEASE,
-        app_version = BuildConfig.VERSION_NAME,
+        app_version = getAppVersion(),
         tz = TimeZone.getDefault().id
     )
+
+    private fun getAppVersion(): String = try {
+        val info = context.packageManager.getPackageInfo(context.packageName, 0)
+        info.versionName ?: "1.0"
+    } catch (e: Exception) {
+        "1.0"
+    }
 
     private fun getDeviceId(): String {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
