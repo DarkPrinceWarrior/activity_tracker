@@ -39,6 +39,8 @@ class BatteryDataAggregator(
             )
             repository.saveBattery(listOf(entity))
             Log.d(TAG, "Saved battery event: ${(sample.level * 100).toInt()}%")
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Error saving battery event", e)
         }

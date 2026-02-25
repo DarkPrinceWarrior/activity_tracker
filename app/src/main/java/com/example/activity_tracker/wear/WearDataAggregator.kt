@@ -38,6 +38,8 @@ class WearDataAggregator(
             )
             repository.saveWear(listOf(entity))
             Log.d(TAG, "Saved wear event: ${wearState.state}")
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Error saving wear event", e)
         }

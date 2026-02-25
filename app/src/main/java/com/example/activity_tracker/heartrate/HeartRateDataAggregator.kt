@@ -61,6 +61,8 @@ class HeartRateDataAggregator(
         try {
             repository.saveHeartRate(toSave)
             Log.d(TAG, "Saved ${toSave.size} heart rate samples")
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Error saving heart rate samples", e)
             hrBuffer.addAll(toSave) // Возврат в буфер при ошибке
