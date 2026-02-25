@@ -2045,3 +2045,1389 @@ def sample_upload_request():
 8. **Масштабирование** — ожидаемое количество устройств (10/100/1000+)?
 9. **Резервное копирование** — политика бэкапов PostgreSQL.
 10. **GATEWAY-режим** — реализовывать ли эндпоинт для мобильного шлюза (`POST /api/v1/gateway/packets`)?
+
+---
+
+## 15. Классификация активности A1–В4
+
+### 15.1. Классы и подклассы (согласно ТЗ, таблица 5)
+
+| Класс | Подкласс | Код | Описание | Выработка % |
+|-------|----------|-----|----------|-------------|
+| **А. Продуктивная** | Высокоинтенсивная | `A1` | Устойчивый повторяющийся паттерн высокой частоты движения (работа инструментом, вибрация) | 100% |
+| | Среднеинтенсивная | `A2` | Умеренное движение, фиксация в рабочей зоне >15 мин, без простоя (вязка арматуры, монтаж) | 90–100% |
+| **Б. Нейтральная** | Перемещение | `B1` | Движение 4–6 км/ч между рабочими BLE-зонами, без высокоинтенсивных паттернов | 50% |
+| | Надзор/контроль | `B2` | Фиксация в зоне, низкая активность, передвижение на месте (ИТР, мастера) | 50–70% |
+| **В. Непродуктивная** | Скрытый простой | `V1` | Отсутствие движения, вне зоны отдыха, в рабочее время | 0% |
+| | Официальный отдых | `V2` | Отсутствие движения, в зоне "Обед"/"Отдых" | 0% |
+| | Нарушение режима | `V3` | Снятие часов или покидание объекта | −100% |
+| | Активность вне зоны | `V4` | Паттерны работы вне зоны строительной площадки | 0% |
+
+### 15.2. Алгоритм классификации
+
+#### 15.2.1. Подход: Feature Engineering + Rule-Based + (опционально) ML
+
+**Этап 1 — Извлечение признаков (Feature Extraction):**
+
+Сырые данные разбиваются на **временные окна** (window) фиксированной длительности.
+
+**Настраиваемые параметры:**
+```python
+class ClassificationConfig(BaseModel):
+    window_size_sec: int = 10          # Длина окна (секунды)
+    window_overlap_sec: int = 5        # Перекрытие окон
+    min_interval_sec: int = 60         # Минимальная длительность интервала одного класса
+    smoothing_window: int = 3          # Медианный фильтр для сглаживания
+    
+    # Пороги акселерометра
+    accel_energy_high: float = 50.0    # Порог A1 (высокая энергия)
+    accel_energy_medium: float = 15.0  # Порог A2 (средняя энергия)
+    accel_energy_low: float = 2.0      # Порог покоя
+    
+    # Пороги гироскопа
+    gyro_energy_high: float = 10.0     # Повторяющиеся вращения (A1)
+    gyro_energy_medium: float = 3.0    # Умеренные повороты (A2)
+    
+    # Пороги шагов (из акселерометра)
+    step_frequency_min: float = 1.5    # Мин. частота шагов (Гц) для B1
+    step_frequency_max: float = 2.5    # Макс. частота шагов для B1
+    walking_speed_min_kmh: float = 3.0 # Мин. скорость ходьбы
+    walking_speed_max_kmh: float = 7.0 # Макс. скорость ходьбы
+    
+    # Пороги пульса (вспомогательные)
+    hr_rest_max: int = 80              # Пульс покоя
+    hr_work_min: int = 100             # Пульс при физической работе
+    
+    # Контекст зон
+    idle_in_work_zone_min_sec: int = 300  # V1: простой в рабочей зоне > 5 мин
+```
+
+**Признаки (features) на каждое окно:**
+
+```python
+class WindowFeatures(BaseModel):
+    """Признаки, извлекаемые из одного временного окна"""
+    window_start_ms: int
+    window_end_ms: int
+    
+    # Акселерометр
+    accel_energy: float        # Сумма квадратов амплитуд (signal energy)
+    accel_std_x: float         # Стандартное отклонение по X
+    accel_std_y: float
+    accel_std_z: float
+    accel_magnitude_mean: float  # Средний модуль вектора
+    accel_magnitude_std: float   # СКО модуля
+    accel_peak_frequency: float  # Доминирующая частота (FFT)
+    accel_spectral_entropy: float  # Энтропия спектра
+    
+    # Гироскоп
+    gyro_energy: float
+    gyro_std_x: float
+    gyro_std_y: float
+    gyro_std_z: float
+    gyro_peak_frequency: float
+    
+    # Барометр
+    baro_delta_hpa: float      # Изменение давления за окно
+    baro_trend: str            # 'up' / 'down' / 'stable'
+    
+    # Магнитометр
+    mag_std: float             # СКО модуля (индикатор близости к оборудованию)
+    
+    # Пульс
+    hr_mean: Optional[int]
+    hr_std: Optional[float]
+    
+    # Wear
+    is_on_wrist: bool
+    
+    # BLE контекст
+    current_zone_id: Optional[str]
+    current_zone_type: Optional[str]  # 'work' / 'rest' / 'transit' / 'storage'
+    is_on_site: bool           # Есть ли хотя бы одна BLE-метка площадки
+```
+
+**Этап 2 — Классификация (Rule-Based):**
+
+```
+Для каждого окна:
+
+1. Проверка wear:
+   └── is_on_wrist == false → V3 (нарушение)
+
+2. Проверка нахождения на площадке:
+   └── is_on_site == false AND accel_energy > low → V4 (вне зоны)
+
+3. Проверка зоны отдыха:
+   └── zone_type == 'rest' AND accel_energy < low → V2 (официальный отдых)
+
+4. Проверка высокоинтенсивной работы:
+   ├── accel_energy > high
+   ├── AND gyro_energy > gyro_high
+   ├── AND accel_peak_frequency в диапазоне вибрации (5-25 Гц)
+   ├── AND zone_type == 'work'
+   └── → A1
+
+5. Проверка среднеинтенсивной работы:
+   ├── accel_energy > medium
+   ├── AND gyro_energy > gyro_medium
+   ├── AND zone_type == 'work'
+   └── → A2
+
+6. Проверка перемещения:
+   ├── step_frequency в [1.5, 2.5] Гц
+   ├── AND accel_magnitude ритмичный (шаговый паттерн)
+   └── → B1
+
+7. Проверка надзора:
+   ├── accel_energy в [low, medium]
+   ├── AND зона рабочая
+   ├── AND есть микродвижения (не полный покой)
+   └── → B2
+
+8. Скрытый простой (по умолчанию):
+   ├── accel_energy < low
+   ├── AND zone_type == 'work'
+   ├── AND длительность > idle_in_work_zone_min_sec
+   └── → V1
+
+9. Иначе → B2 (неопределённая низкая активность)
+```
+
+**Этап 3 — Постобработка:**
+
+1. Медианный фильтр (smoothing_window) для удаления кратковременных "всплесков".
+2. Объединение смежных окон одного класса в **интервалы**.
+3. Удаление интервалов короче `min_interval_sec` (поглощение соседними).
+4. Запись интервалов в БД.
+
+#### 15.2.2. Опциональный ML-подход (фаза 2)
+
+Для повышения точности можно заменить правила на ML-модель:
+
+```python
+# Варианты моделей:
+# 1. Random Forest / XGBoost на WindowFeatures → class
+# 2. 1D-CNN на сырых данных окна → class
+# 3. LSTM на последовательности окон → class
+
+# Обучение:
+# - Разметить 50-100 смен вручную (A1/A2/B1/B2/V1/V2/V3/V4)
+# - Обучить модель
+# - Валидация: 80/20 split по сменам (не по окнам!)
+# - Метрики: accuracy, F1 per class, confusion matrix
+
+# Интеграция:
+# - Модель хранится как артефакт (pickle/ONNX)
+# - Версионируется в crypto_keys или отдельной таблице
+# - Celery task вызывает predict() вместо rule-based
+```
+
+### 15.3. Таблицы БД
+
+#### 15.3.1. Таблица `activity_intervals`
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGSERIAL, PK | ID |
+| `shift_id` | UUID, FK → shifts.id | Смена |
+| `packet_id` | VARCHAR(64), FK → packets.packet_id | Пакет |
+| `device_id` | VARCHAR(64), FK → devices.device_id | Устройство |
+| `employee_id` | UUID, FK → employees.id, NULLABLE | Сотрудник |
+| `activity_class` | VARCHAR(2), NOT NULL | Код: 'A1','A2','B1','B2','V1','V2','V3','V4' |
+| `start_ts_ms` | BIGINT, NOT NULL | Начало интервала (Unix ms) |
+| `end_ts_ms` | BIGINT, NOT NULL | Конец интервала (Unix ms) |
+| `duration_sec` | INTEGER, NOT NULL | Длительность (секунды) |
+| `zone_id` | VARCHAR(64), FK → zones.id, NULLABLE | Зона (если определена) |
+| `confidence` | FLOAT, DEFAULT 1.0 | Уверенность классификации (0.0–1.0) |
+| `features_json` | JSONB, NULLABLE | Средние признаки интервала (для отладки) |
+| `created_at` | TIMESTAMPTZ | Время создания |
+
+**Индексы:** `(shift_id)`, `(device_id, start_ts_ms)`, `(activity_class)`, `(employee_id, start_ts_ms)`
+
+#### 15.3.2. Таблица `classification_configs`
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | SERIAL, PK | ID |
+| `name` | VARCHAR(64), UNIQUE | Название конфигурации |
+| `config_json` | JSONB, NOT NULL | ClassificationConfig как JSON |
+| `is_active` | BOOLEAN, DEFAULT false | Активная конфигурация |
+| `version` | INTEGER, DEFAULT 1 | Версия |
+| `created_at` | TIMESTAMPTZ | Время создания |
+| `updated_at` | TIMESTAMPTZ | Время обновления |
+
+### 15.4. Celery задача `classify_activity`
+
+**Запуск:** Автоматически после `decrypt_and_parse_packet` (статус 'processed').
+
+**Алгоритм:**
+```
+1. Загрузить расшифрованные данные смены из БД
+   ├── accel, gyro, baro, mag, hr, ble, wear
+   └── Загрузить активную ClassificationConfig
+
+2. Извлечь BLE-контекст
+   ├── Определить текущую зону для каждого момента времени
+   └── (используя zone_visits, см. раздел 16)
+
+3. Разбить на окна (window_size_sec, overlap)
+   └── Для каждого окна извлечь WindowFeatures
+
+4. Классифицировать каждое окно
+   ├── Rule-based или ML predict()
+   └── Результат: массив (window_start, window_end, class, confidence)
+
+5. Постобработка
+   ├── Медианный фильтр
+   ├── Объединить смежные окна одного класса → интервалы
+   └── Удалить короткие интервалы (< min_interval_sec)
+
+6. Сохранить в activity_intervals
+   └── Batch INSERT
+
+7. Запустить calculate_shift_metrics (раздел 17)
+```
+
+### 15.5. API эндпоинты
+
+#### `GET /api/v1/shifts/{shift_id}/activity` — Интервалы активности смены
+
+**Response 200:**
+```json
+{
+  "shift_id": "uuid",
+  "total_intervals": 48,
+  "intervals": [
+    {
+      "activity_class": "A2",
+      "start_ts_ms": 1700000000000,
+      "end_ts_ms": 1700003600000,
+      "duration_sec": 3600,
+      "zone_id": "zone_work_01",
+      "zone_name": "КУГ-2 (секция 1)",
+      "confidence": 0.92
+    }
+  ],
+  "summary": {
+    "A1_sec": 7200,
+    "A2_sec": 14400,
+    "B1_sec": 3600,
+    "B2_sec": 1800,
+    "V1_sec": 900,
+    "V2_sec": 3600,
+    "V3_sec": 0,
+    "V4_sec": 0,
+    "total_sec": 31500
+  }
+}
+```
+
+#### `GET /api/v1/admin/classification/config` — Текущая конфигурация
+
+#### `PUT /api/v1/admin/classification/config` — Обновление конфигурации
+
+**Request Body:** `ClassificationConfig` JSON.
+При обновлении создаётся новая версия. Старая сохраняется.
+
+---
+
+## 16. Геолокация и маршрут по BLE
+
+### 16.1. Модель зон
+
+Каждая BLE-метка (beacon) привязана к **зоне** на площадке. Зона имеет тип, определяющий интерпретацию активности.
+
+#### 16.1.1. Таблица `sites` (площадки/объекты)
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | VARCHAR(64), PK | ID площадки |
+| `name` | VARCHAR(256), NOT NULL | Название площадки |
+| `address` | TEXT, NULLABLE | Адрес |
+| `timezone` | VARCHAR(64), DEFAULT 'Europe/Moscow' | Часовой пояс |
+| `status` | VARCHAR(16), DEFAULT 'active' | 'active', 'archived' |
+| `created_at` | TIMESTAMPTZ | Время создания |
+| `updated_at` | TIMESTAMPTZ | Время обновления |
+
+#### 16.1.2. Таблица `zones` (зоны площадки)
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | VARCHAR(64), PK | ID зоны |
+| `site_id` | VARCHAR(64), FK → sites.id, NOT NULL | Площадка |
+| `name` | VARCHAR(256), NOT NULL | Название ("КУГ-2 секция 1", "Бытовка №3") |
+| `zone_type` | VARCHAR(32), NOT NULL | Тип: 'work', 'rest', 'transit', 'storage', 'entry', 'other' |
+| `productivity_percent` | INTEGER, DEFAULT 100 | Процент продуктивности зоны (100% для рабочей, 0% для отдыха) |
+| `lat` | FLOAT, NULLABLE | Широта (для карты) |
+| `lon` | FLOAT, NULLABLE | Долгота (для карты) |
+| `floor` | INTEGER, NULLABLE | Этаж |
+| `status` | VARCHAR(16), DEFAULT 'active' | 'active', 'archived' |
+| `created_at` | TIMESTAMPTZ | |
+| `updated_at` | TIMESTAMPTZ | |
+
+**Индекс:** `(site_id, status)`
+
+#### 16.1.3. Таблица `zone_beacons` (привязка BLE-меток к зонам)
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | SERIAL, PK | ID |
+| `zone_id` | VARCHAR(64), FK → zones.id, NOT NULL | Зона |
+| `beacon_id` | VARCHAR(128), NOT NULL, UNIQUE | ID BLE-метки (из BleScanner на часах) |
+| `lat` | FLOAT, NULLABLE | Координаты метки |
+| `lon` | FLOAT, NULLABLE | |
+| `status` | VARCHAR(16), DEFAULT 'active' | 'active', 'removed' |
+| `created_at` | TIMESTAMPTZ | |
+
+**Индекс:** `(beacon_id)` — для быстрого поиска зоны по beacon_id
+
+#### 16.1.4. Таблица `zone_visits` (посещения зон)
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGSERIAL, PK | ID |
+| `shift_id` | UUID, FK → shifts.id | Смена |
+| `device_id` | VARCHAR(64), FK → devices.device_id | Устройство |
+| `employee_id` | UUID, FK → employees.id, NULLABLE | Сотрудник |
+| `zone_id` | VARCHAR(64), FK → zones.id | Зона |
+| `enter_ts_ms` | BIGINT, NOT NULL | Время входа в зону (Unix ms) |
+| `exit_ts_ms` | BIGINT, NULLABLE | Время выхода из зоны (NULL = ещё в зоне) |
+| `duration_sec` | INTEGER, NULLABLE | Длительность нахождения (секунды) |
+| `avg_rssi` | INTEGER, NULLABLE | Средний уровень сигнала |
+| `created_at` | TIMESTAMPTZ | |
+
+**Индексы:** `(shift_id)`, `(device_id, enter_ts_ms)`, `(zone_id, enter_ts_ms)`
+
+#### 16.1.5. Таблица `unknown_beacons` (неизвестные метки)
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGSERIAL, PK | ID |
+| `beacon_id` | VARCHAR(128), NOT NULL | Неизвестный beacon_id |
+| `device_id` | VARCHAR(64) | Какое устройство обнаружило |
+| `first_seen_ts_ms` | BIGINT | Первое обнаружение |
+| `last_seen_ts_ms` | BIGINT | Последнее обнаружение |
+| `count` | INTEGER, DEFAULT 1 | Количество обнаружений |
+| `status` | VARCHAR(16), DEFAULT 'new' | 'new', 'identified', 'ignored' |
+| `created_at` | TIMESTAMPTZ | |
+
+### 16.2. Алгоритм формирования маршрута
+
+**Запуск:** Celery задача `build_zone_visits`, после `decrypt_and_parse_packet`.
+
+```
+Вход: ble_events из расшифрованного пакета (отсортированы по ts_ms)
+
+Параметры (настраиваемые):
+  MIN_ZONE_DURATION_SEC = 30    # Минимальное время в зоне (сглаживание "дребезга")
+  MAX_GAP_SEC = 300             # Макс. разрыв без BLE-событий (зона не теряется)
+  RSSI_THRESHOLD = -85          # Мин. уровень сигнала для считывания
+
+Алгоритм:
+
+1. Для каждого ble_event:
+   ├── Найти zone_id по beacon_id в zone_beacons
+   ├── Если не найден → записать в unknown_beacons, пропустить
+   └── Если RSSI < RSSI_THRESHOLD → пропустить (слабый сигнал)
+
+2. Формирование интервалов:
+   ├── current_zone = None
+   ├── Для каждого события (по времени):
+   │   ├── Если zone_id == current_zone → продлить текущий интервал
+   │   ├── Если zone_id != current_zone:
+   │   │   ├── Если прошло < MIN_ZONE_DURATION_SEC → игнорировать (дребезг)
+   │   │   └── Иначе → закрыть текущий интервал, открыть новый
+   │   └── Если gap > MAX_GAP_SEC → закрыть текущий (выход из зоны)
+   └── Закрыть последний интервал
+
+3. Постобработка:
+   ├── Удалить интервалы < MIN_ZONE_DURATION_SEC
+   ├── Объединить смежные интервалы одной зоны (если разрыв < MAX_GAP_SEC)
+   └── Рассчитать duration_sec для каждого интервала
+
+4. Сохранить в zone_visits (Batch INSERT)
+
+5. Сформировать маршрут:
+   └── route = [zone_visits отсортированные по enter_ts_ms]
+```
+
+### 16.3. API эндпоинты
+
+#### `GET /api/v1/shifts/{shift_id}/zones` — Посещения зон за смену
+
+**Response 200:**
+```json
+{
+  "shift_id": "uuid",
+  "total_visits": 12,
+  "total_zones": 5,
+  "visits": [
+    {
+      "zone_id": "zone_01",
+      "zone_name": "КУГ-2 (секция 1)",
+      "zone_type": "work",
+      "enter_ts_ms": 1700000000000,
+      "exit_ts_ms": 1700003600000,
+      "duration_sec": 3600,
+      "avg_rssi": -65
+    }
+  ],
+  "summary_by_zone": [
+    {
+      "zone_id": "zone_01",
+      "zone_name": "КУГ-2 (секция 1)",
+      "zone_type": "work",
+      "total_duration_sec": 18000,
+      "visit_count": 4
+    }
+  ]
+}
+```
+
+#### `GET /api/v1/shifts/{shift_id}/route` — Маршрут перемещений
+
+**Response 200:**
+```json
+{
+  "shift_id": "uuid",
+  "route": [
+    { "zone_id": "zone_entry", "zone_name": "Проходная", "enter_ts_ms": 1700000000000, "exit_ts_ms": 1700000300000 },
+    { "zone_id": "zone_01", "zone_name": "КУГ-2 (секция 1)", "enter_ts_ms": 1700000300000, "exit_ts_ms": 1700003600000 },
+    { "zone_id": "zone_rest", "zone_name": "Бытовка №3", "enter_ts_ms": 1700003600000, "exit_ts_ms": 1700007200000 }
+  ]
+}
+```
+
+#### CRUD для зон и меток
+
+- `GET /api/v1/sites` — Список площадок
+- `POST /api/v1/sites` — Создать площадку
+- `GET /api/v1/sites/{site_id}/zones` — Зоны площадки
+- `POST /api/v1/sites/{site_id}/zones` — Создать зону
+- `PUT /api/v1/zones/{zone_id}` — Обновить зону
+- `POST /api/v1/zones/{zone_id}/beacons` — Привязать BLE-метку к зоне
+- `DELETE /api/v1/zones/{zone_id}/beacons/{beacon_id}` — Отвязать метку
+- `GET /api/v1/admin/unknown-beacons` — Список неизвестных меток
+
+---
+
+## 17. Расчёт выработки и метрик
+
+### 17.1. Формулы (согласно ТЗ, п. 5.3.4.4)
+
+#### 17.1.1. Выработка (%)
+
+Интегральный показатель эффективного рабочего времени:
+
+```
+Выработка(%) = (
+    Time(A1) × 1.00 +
+    Time(A2) × 0.95 +
+    Time(B1) × 0.50 +
+    Time(B2) × 0.60
+) / Time(на площадке, исключая V2) × 100%
+```
+
+**Примечания:**
+- V2 (официальный отдых) исключается из знаменателя
+- V3 (нарушение) штрафует: −100% за этот интервал
+- Коэффициенты A2 (0.95), B2 (0.60) — настраиваемые
+
+#### 17.1.2. Коэффициент скрытого простоя В1 (%)
+
+```
+V1(%) = Time(V1 в рабочих зонах) / Time(нахождения в рабочих зонах) × 100%
+```
+
+Где "рабочая зона" — зоны с `zone_type = 'work'`.
+
+#### 17.1.3. Среднее время реакции
+
+Интервал от момента входа сотрудника в рабочую BLE-зону до начала продуктивной деятельности (A1 или A2).
+
+```
+reaction_time = первый A1/A2.start_ts_ms − zone_visit.enter_ts_ms
+```
+
+**Расчёт:**
+- По каждому входу в рабочую зону (событийно)
+- Среднее / медиана по смене
+- Агрегаты по группам (бригада/подрядчик/площадка)
+
+**Исключения (п. 5.3.4.4):**
+- Если A1/A2 не наступили после входа в зону → "нет продуктивной активности"
+- Правило: считать до выхода из зоны (настраиваемо)
+
+### 17.2. Таблицы БД
+
+#### 17.2.1. Таблица `shift_metrics` (метрики по смене)
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGSERIAL, PK | ID |
+| `shift_id` | UUID, FK → shifts.id, UNIQUE | Смена |
+| `device_id` | VARCHAR(64), FK → devices.device_id | Устройство |
+| `employee_id` | UUID, FK → employees.id, NULLABLE | Сотрудник |
+| `site_id` | VARCHAR(64), FK → sites.id, NULLABLE | Площадка |
+| `shift_duration_sec` | INTEGER | Общая длительность смены |
+| `on_site_duration_sec` | INTEGER | Время на площадке |
+| `a1_duration_sec` | INTEGER, DEFAULT 0 | Время A1 |
+| `a2_duration_sec` | INTEGER, DEFAULT 0 | Время A2 |
+| `b1_duration_sec` | INTEGER, DEFAULT 0 | Время B1 |
+| `b2_duration_sec` | INTEGER, DEFAULT 0 | Время B2 |
+| `v1_duration_sec` | INTEGER, DEFAULT 0 | Время V1 |
+| `v2_duration_sec` | INTEGER, DEFAULT 0 | Время V2 |
+| `v3_duration_sec` | INTEGER, DEFAULT 0 | Время V3 |
+| `v4_duration_sec` | INTEGER, DEFAULT 0 | Время V4 |
+| `productivity_percent` | FLOAT | Выработка (%) |
+| `v1_percent` | FLOAT | Коэффициент скрытого простоя (%) |
+| `avg_reaction_time_sec` | FLOAT, NULLABLE | Среднее время реакции (сек) |
+| `median_reaction_time_sec` | FLOAT, NULLABLE | Медиана времени реакции (сек) |
+| `zones_visited` | INTEGER, DEFAULT 0 | Количество посещённых зон |
+| `work_zones_visited` | INTEGER, DEFAULT 0 | Количество рабочих зон |
+| `avg_hr_bpm` | INTEGER, NULLABLE | Средний пульс за смену |
+| `wear_compliance_percent` | FLOAT, DEFAULT 100.0 | % времени с часами на руке |
+| `anomalies_count` | INTEGER, DEFAULT 0 | Количество аномалий |
+| `data_quality_score` | FLOAT, DEFAULT 1.0 | Качество данных (0.0–1.0) |
+| `created_at` | TIMESTAMPTZ | |
+| `updated_at` | TIMESTAMPTZ | |
+
+**Индексы:** `(employee_id, shift_id)`, `(site_id, created_at)`, `(device_id)`
+
+#### 17.2.2. Таблица `reaction_times` (время реакции — детально)
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGSERIAL, PK | ID |
+| `shift_id` | UUID, FK → shifts.id | Смена |
+| `employee_id` | UUID, FK → employees.id, NULLABLE | Сотрудник |
+| `zone_id` | VARCHAR(64), FK → zones.id | Рабочая зона |
+| `zone_enter_ts_ms` | BIGINT | Вход в зону |
+| `activity_start_ts_ms` | BIGINT, NULLABLE | Начало A1/A2 (NULL = не начал) |
+| `reaction_time_sec` | INTEGER, NULLABLE | Время реакции (сек), NULL = не начал |
+| `has_productive_activity` | BOOLEAN, DEFAULT false | Была ли A1/A2 в этом визите |
+| `created_at` | TIMESTAMPTZ | |
+
+**Индексы:** `(shift_id)`, `(employee_id, zone_id)`
+
+### 17.3. Celery задача `calculate_shift_metrics`
+
+**Запуск:** После `classify_activity` (раздел 15) и `build_zone_visits` (раздел 16).
+
+```
+1. Загрузить activity_intervals и zone_visits для смены
+
+2. Рассчитать длительности по классам:
+   ├── Суммировать duration_sec по каждому activity_class
+   └── a1_sec, a2_sec, b1_sec, b2_sec, v1_sec, v2_sec, v3_sec, v4_sec
+
+3. Рассчитать выработку:
+   ├── productive = a1*1.00 + a2*0.95 + b1*0.50 + b2*0.60
+   ├── total_work = on_site - v2 (исключить отдых)
+   └── productivity_percent = productive / total_work * 100
+
+4. Рассчитать V1%:
+   ├── v1_in_work_zones = SUM(V1 duration WHERE zone_type='work')
+   ├── time_in_work_zones = SUM(zone_visit duration WHERE zone_type='work')
+   └── v1_percent = v1_in_work_zones / time_in_work_zones * 100
+
+5. Рассчитать время реакции:
+   ├── Для каждого zone_visit WHERE zone_type='work':
+   │   ├── Найти первый A1/A2 interval после enter_ts_ms
+   │   ├── reaction = A1.start_ts_ms - zone_visit.enter_ts_ms
+   │   └── Записать в reaction_times
+   ├── avg_reaction = AVG(reaction_time_sec)
+   └── median_reaction = MEDIAN(reaction_time_sec)
+
+6. Рассчитать wear compliance:
+   └── wear_percent = SUM(wear='on' duration) / shift_duration * 100
+
+7. Сохранить в shift_metrics (INSERT or UPDATE)
+
+8. Запустить detect_anomalies (раздел 18)
+```
+
+### 17.4. API эндпоинты
+
+#### `GET /api/v1/shifts/{shift_id}/metrics` — Метрики смены
+
+**Response 200:**
+```json
+{
+  "shift_id": "uuid",
+  "employee_name": "Иванов И.И.",
+  "site_name": "Площадка №1",
+  "shift_duration_sec": 43200,
+  "on_site_duration_sec": 41400,
+  "productivity_percent": 78.5,
+  "v1_percent": 3.2,
+  "avg_reaction_time_sec": 145,
+  "median_reaction_time_sec": 120,
+  "activity_breakdown": {
+    "A1_sec": 7200, "A1_percent": 17.4,
+    "A2_sec": 14400, "A2_percent": 34.8,
+    "B1_sec": 3600, "B1_percent": 8.7,
+    "B2_sec": 1800, "B2_percent": 4.3,
+    "V1_sec": 900, "V1_percent": 2.2,
+    "V2_sec": 3600, "V2_percent": 8.7,
+    "V3_sec": 0, "V3_percent": 0.0,
+    "V4_sec": 0, "V4_percent": 0.0
+  },
+  "wear_compliance_percent": 99.8,
+  "zones_visited": 5,
+  "avg_hr_bpm": 82,
+  "anomalies_count": 0,
+  "data_quality_score": 0.95
+}
+```
+
+#### `GET /api/v1/analytics/productivity` — Сводная выработка
+
+**Query:** `site_id`, `employee_id`, `company_id`, `brigade_id`, `date_from`, `date_to`, `page`, `page_size`
+
+**Response 200:**
+```json
+{
+  "period": { "from": "2026-02-01", "to": "2026-02-25" },
+  "items": [
+    {
+      "employee_id": "uuid",
+      "employee_name": "Иванов И.И.",
+      "company": "ООО Строймонтаж",
+      "total_shifts": 20,
+      "total_hours_on_site": 240,
+      "avg_productivity_percent": 76.3,
+      "avg_v1_percent": 4.1,
+      "avg_reaction_time_sec": 155,
+      "anomalies_total": 1
+    }
+  ],
+  "aggregates": {
+    "avg_productivity_percent": 72.1,
+    "avg_v1_percent": 5.8,
+    "avg_reaction_time_sec": 180
+  },
+  "total": 42,
+  "page": 1,
+  "page_size": 50
+}
+```
+
+#### `GET /api/v1/shifts/{shift_id}/reaction-times` — Детальное время реакции
+
+**Response 200:**
+```json
+{
+  "shift_id": "uuid",
+  "reactions": [
+    {
+      "zone_id": "zone_01",
+      "zone_name": "КУГ-2 (секция 1)",
+      "zone_enter_ts_ms": 1700000300000,
+      "activity_start_ts_ms": 1700000420000,
+      "reaction_time_sec": 120,
+      "has_productive_activity": true
+    }
+  ],
+  "avg_sec": 145,
+  "median_sec": 120
+}
+```
+
+---
+
+## 18. Антифрод и аномалии
+
+### 18.1. Правила обнаружения (согласно ТЗ, п. 5.3.4.6)
+
+| № | Тип аномалии | Код | Условие | Серьёзность |
+|---|-------------|-----|---------|-------------|
+| 1 | Активность при снятых часах | `WORK_OFF_WRIST` | activity_class ∈ {A1,A2} AND wear_state = 'off' | critical |
+| 2 | Частые снятия/надевания | `FREQUENT_WEAR_TOGGLE` | Количество переключений wear on↔off > N за T минут | warning |
+| 3 | Работа вне площадки | `WORK_OFF_SITE` | activity_class ∈ {A1,A2} AND is_on_site = false (нет BLE-меток) | warning |
+| 4 | Невозможное перемещение | `IMPOSSIBLE_MOVE` | Переход zone_A → zone_B за < X секунд (при известном расстоянии) | critical |
+| 5 | Длительное отсутствие данных | `DATA_GAP` | Разрыв в данных сенсоров > M минут (при wear = 'on') | info |
+| 6 | Снятие в рабочее время | `OFF_WRIST_WORK_HOURS` | wear = 'off' во время активной смены > K минут | warning |
+| 7 | Пульс = 0 при wear = on | `ZERO_HR_ON_WRIST` | hr.bpm = 0 при wear = 'on' длительно (возможен муляж) | critical |
+
+### 18.2. Настраиваемые параметры
+
+```python
+class AnomalyConfig(BaseModel):
+    # Частые снятия/надевания
+    wear_toggle_max_count: int = 5       # Макс. переключений
+    wear_toggle_window_min: int = 30     # За окно (минуты)
+    
+    # Невозможное перемещение
+    min_travel_time_sec: int = 60        # Мин. время между зонами
+    # (или матрица расстояний zones × zones)
+    
+    # Разрыв данных
+    max_data_gap_min: int = 10           # Макс. допустимый разрыв (минуты)
+    
+    # Снятие в рабочее время
+    max_off_wrist_min: int = 5           # Допустимое время без часов
+    
+    # Пульс
+    zero_hr_max_duration_sec: int = 300  # Макс. время нулевого пульса
+```
+
+### 18.3. Таблица `anomalies`
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGSERIAL, PK | ID |
+| `shift_id` | UUID, FK → shifts.id | Смена |
+| `device_id` | VARCHAR(64), FK → devices.device_id | Устройство |
+| `employee_id` | UUID, FK → employees.id, NULLABLE | Сотрудник |
+| `anomaly_type` | VARCHAR(32), NOT NULL | Код: 'WORK_OFF_WRIST', 'FREQUENT_WEAR_TOGGLE', ... |
+| `severity` | VARCHAR(16), NOT NULL | 'critical', 'warning', 'info' |
+| `start_ts_ms` | BIGINT, NOT NULL | Начало аномалии |
+| `end_ts_ms` | BIGINT, NULLABLE | Конец аномалии |
+| `description` | TEXT | Описание ("Снятие часов в 14:32 в зоне КУГ-2") |
+| `details_json` | JSONB, NULLABLE | Доп. данные (зоны, расстояния, количество) |
+| `status` | VARCHAR(16), DEFAULT 'new' | 'new', 'confirmed', 'false_positive', 'under_review' |
+| `resolved_by` | UUID, FK → users.id, NULLABLE | Кто разобрал |
+| `resolved_at` | TIMESTAMPTZ, NULLABLE | Когда |
+| `comment` | TEXT, NULLABLE | Комментарий при разборе |
+| `created_at` | TIMESTAMPTZ | |
+
+**Индексы:** `(shift_id)`, `(employee_id, created_at)`, `(anomaly_type, status)`, `(severity, status)`
+
+### 18.4. Celery задача `detect_anomalies`
+
+**Запуск:** После `calculate_shift_metrics` (раздел 17).
+
+```
+1. Загрузить данные смены:
+   ├── wear_events, activity_intervals, zone_visits, hr_samples
+   └── Загрузить AnomalyConfig
+
+2. Проверка WORK_OFF_WRIST:
+   ├── Для каждого activity_interval WHERE class ∈ {A1, A2}:
+   │   └── Проверить wear_state в этот период
+   └── Если wear = 'off' → создать аномалию (critical)
+
+3. Проверка FREQUENT_WEAR_TOGGLE:
+   ├── Скользящее окно (wear_toggle_window_min)
+   ├── Подсчитать переключения on↔off
+   └── Если count > wear_toggle_max_count → аномалия (warning)
+
+4. Проверка WORK_OFF_SITE:
+   ├── Для каждого activity_interval WHERE class ∈ {A1, A2}:
+   │   └── Проверить наличие BLE-событий в этот период
+   └── Если BLE пустой → аномалия (warning)
+
+5. Проверка IMPOSSIBLE_MOVE:
+   ├── Для каждой пары последовательных zone_visits:
+   │   ├── delta = visit[i+1].enter_ts - visit[i].exit_ts
+   │   └── Если delta < min_travel_time_sec → аномалия (critical)
+   └── (Опционально: матрица расстояний между зонами)
+
+6. Проверка DATA_GAP:
+   ├── Найти разрывы в данных акселерометра > max_data_gap_min
+   └── При wear = 'on' → аномалия (info)
+
+7. Проверка OFF_WRIST_WORK_HOURS:
+   ├── Суммировать wear='off' интервалы
+   └── Если total > max_off_wrist_min → аномалия (warning)
+
+8. Проверка ZERO_HR_ON_WRIST:
+   ├── Найти интервалы hr.bpm = 0 при wear = 'on'
+   └── Если длительность > zero_hr_max_duration_sec → аномалия (critical)
+
+9. Batch INSERT в anomalies
+
+10. UPDATE shift_metrics SET anomalies_count = COUNT(anomalies)
+```
+
+### 18.5. API эндпоинты
+
+#### `GET /api/v1/shifts/{shift_id}/anomalies` — Аномалии смены
+
+**Response 200:**
+```json
+{
+  "shift_id": "uuid",
+  "anomalies": [
+    {
+      "id": 1234,
+      "anomaly_type": "OFF_WRIST_WORK_HOURS",
+      "severity": "warning",
+      "start_ts_ms": 1700010000000,
+      "end_ts_ms": 1700010600000,
+      "description": "Часы сняты на 10 мин в рабочее время (зона КУГ-2)",
+      "status": "new"
+    }
+  ],
+  "total": 1
+}
+```
+
+#### `GET /api/v1/anomalies` — Список всех аномалий (Admin)
+
+**Query:** `site_id`, `employee_id`, `severity`, `status`, `anomaly_type`, `date_from`, `date_to`, `page`, `page_size`
+
+#### `PATCH /api/v1/anomalies/{anomaly_id}` — Разбор аномалии
+
+**Request Body:**
+```json
+{
+  "status": "confirmed",
+  "comment": "Подтверждено: сотрудник снимал часы для мытья рук"
+}
+```
+
+#### `GET /api/v1/admin/anomaly-config` — Текущая конфигурация
+
+#### `PUT /api/v1/admin/anomaly-config` — Обновление конфигурации
+
+---
+
+## 19. Расширенные справочники
+
+### 19.1. Расширенная таблица `employees` (согласно ТЗ, таблица 3)
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | UUID, PK | ID сотрудника в системе |
+| `full_name` | VARCHAR(256), NOT NULL | ФИО |
+| `company_id` | UUID, FK → companies.id, NULLABLE | Компания/подрядчик |
+| `position` | VARCHAR(128), NULLABLE | Должность |
+| `pass_number` | VARCHAR(64), NULLABLE | Номер пропуска (RFID) |
+| `personnel_number` | VARCHAR(64), NULLABLE, UNIQUE | Табельный номер |
+| `brigade_id` | UUID, FK → brigades.id, NULLABLE | Бригада |
+| `site_id` | VARCHAR(64), FK → sites.id, NULLABLE | Площадка по умолчанию |
+| `consent_pd_file` | VARCHAR(512), NULLABLE | Ссылка на скан согласия ПДн (ФЗ-152) |
+| `consent_pd_date` | DATE, NULLABLE | Дата согласия |
+| `status` | VARCHAR(16), DEFAULT 'active' | 'active', 'inactive', 'archived' |
+| `created_at` | TIMESTAMPTZ | |
+| `updated_at` | TIMESTAMPTZ | |
+| `is_deleted` | BOOLEAN, DEFAULT false | Мягкое удаление |
+
+### 19.2. Таблица `companies` (подрядчики/компании)
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | UUID, PK | ID |
+| `name` | VARCHAR(256), NOT NULL | Название ("ООО Строймонтажинжиниринг") |
+| `inn` | VARCHAR(12), NULLABLE | ИНН |
+| `status` | VARCHAR(16), DEFAULT 'active' | 'active', 'archived' |
+| `created_at` | TIMESTAMPTZ | |
+| `updated_at` | TIMESTAMPTZ | |
+
+### 19.3. Таблица `brigades` (бригады)
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | UUID, PK | ID |
+| `name` | VARCHAR(128), NOT NULL | Название бригады |
+| `company_id` | UUID, FK → companies.id | Компания |
+| `site_id` | VARCHAR(64), FK → sites.id, NULLABLE | Площадка |
+| `foreman_id` | UUID, FK → employees.id, NULLABLE | Бригадир |
+| `status` | VARCHAR(16), DEFAULT 'active' | |
+| `created_at` | TIMESTAMPTZ | |
+
+### 19.4. Таблица `downtime_reasons_catalog` (справочник причин простоя)
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | VARCHAR(32), PK | Код причины (reason_id) |
+| `name` | VARCHAR(256), NOT NULL | "Жду инструмент", "Жду материал", "Нет задания" и т.д. |
+| `category` | VARCHAR(64), NULLABLE | Категория: 'material', 'equipment', 'task', 'other' |
+| `is_active` | BOOLEAN, DEFAULT true | Активна ли причина |
+| `sort_order` | INTEGER, DEFAULT 0 | Порядок в списке на часах |
+| `created_at` | TIMESTAMPTZ | |
+
+### 19.5. Таблица `device_bindings` (история привязок часы↔сотрудник)
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGSERIAL, PK | ID |
+| `device_id` | VARCHAR(64), FK → devices.device_id | Часы |
+| `employee_id` | UUID, FK → employees.id | Сотрудник |
+| `site_id` | VARCHAR(64), FK → sites.id | Площадка |
+| `shift_date` | DATE, NOT NULL | Дата смены |
+| `shift_type` | VARCHAR(16), DEFAULT 'day' | 'day', 'night' |
+| `bound_at` | TIMESTAMPTZ, NOT NULL | Время выдачи |
+| `bound_by` | UUID, FK → users.id, NULLABLE | Кто выдал (оператор) |
+| `unbound_at` | TIMESTAMPTZ, NULLABLE | Время возврата |
+| `unbound_by` | UUID, FK → users.id, NULLABLE | Кто принял |
+| `status` | VARCHAR(16), DEFAULT 'active' | 'active', 'closed', 'lost' |
+
+**Индексы:** `(device_id, status)`, `(employee_id, shift_date)`, `(site_id, shift_date)`
+
+### 19.6. Расширенная таблица `devices` (согласно ТЗ, таблица 4)
+
+Дополнительные поля к существующей таблице `devices` (раздел 3):
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `serial_number` | VARCHAR(64), NULLABLE | Серийный номер |
+| `total_bindings_count` | INTEGER, DEFAULT 0 | Количество людей, носивших часы |
+| `total_on_site_hours` | FLOAT, DEFAULT 0 | Общее время на площадке (часы) |
+| `last_bound_employee_id` | UUID, FK → employees.id, NULLABLE | Кому выдавались последний раз |
+| `last_bound_at` | TIMESTAMPTZ, NULLABLE | Дата/время последней выдачи |
+| `charge_status` | VARCHAR(16), DEFAULT 'unknown' | 'charged', 'low', 'charging', 'unknown' |
+
+### 19.7. API эндпоинты справочников
+
+#### Сотрудники
+- `GET /api/v1/employees` — Список (query: company_id, brigade_id, site_id, status, search, page)
+- `POST /api/v1/employees` — Создать
+- `GET /api/v1/employees/{id}` — Детали
+- `PUT /api/v1/employees/{id}` — Обновить
+- `DELETE /api/v1/employees/{id}` — Мягкое удаление (is_deleted=true)
+- `POST /api/v1/employees/import` — Импорт из CSV/XLSX
+
+#### Компании
+- `GET /api/v1/companies` — Список
+- `POST /api/v1/companies` — Создать
+- `PUT /api/v1/companies/{id}` — Обновить
+
+#### Бригады
+- `GET /api/v1/brigades` — Список (query: company_id, site_id)
+- `POST /api/v1/brigades` — Создать
+- `PUT /api/v1/brigades/{id}` — Обновить
+
+#### Причины простоя
+- `GET /api/v1/downtime-reasons` — Список (для часов и админки)
+- `POST /api/v1/downtime-reasons` — Создать
+- `PUT /api/v1/downtime-reasons/{id}` — Обновить
+
+#### Привязки часов
+- `POST /api/v1/bindings` — Создать привязку (выдача часов)
+- `PUT /api/v1/bindings/{id}/close` — Закрыть привязку (возврат часов)
+- `GET /api/v1/bindings` — История привязок (query: device_id, employee_id, date, site_id)
+
+---
+
+## 20. RBAC и web-пользователи
+
+### 20.1. Ролевая модель (согласно ТЗ, раздел 3)
+
+| Роль | Код | Область доступа | Ключевые права |
+|------|-----|-----------------|----------------|
+| Администратор | `admin` | Глобально (все площадки) | Полный доступ: пользователи, справочники, данные, аналитика, аудит |
+| Оператор площадки | `operator` | Своя площадка | Выдача/возврат часов, выгрузка данных, журнал операций |
+| Руководитель | `manager` | Своя площадка/объект/компания | Дашборды, детализация, отчёты, разбор аномалий |
+| Аналитик | `analyst` | Своя площадка/объект/компания | Read-only, агрегаты **без персональной детализации** |
+
+### 20.2. Таблицы БД
+
+#### 20.2.1. Таблица `users`
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | UUID, PK | ID пользователя |
+| `email` | VARCHAR(256), NOT NULL, UNIQUE | Логин (e-mail) |
+| `password_hash` | VARCHAR(256), NOT NULL | Хеш пароля (argon2) |
+| `full_name` | VARCHAR(256), NOT NULL | ФИО |
+| `phone` | VARCHAR(32), NULLABLE | Телефон |
+| `role` | VARCHAR(16), NOT NULL | 'admin', 'operator', 'manager', 'analyst' |
+| `scope_type` | VARCHAR(16), NULLABLE | Тип области: 'site', 'company', 'brigade', 'global' |
+| `scope_ids` | JSONB, DEFAULT '[]' | ID площадок/компаний/бригад (массив) |
+| `status` | VARCHAR(16), DEFAULT 'active' | 'active', 'blocked' |
+| `last_login_at` | TIMESTAMPTZ, NULLABLE | Последний вход |
+| `password_changed_at` | TIMESTAMPTZ, NULLABLE | Когда менял пароль |
+| `created_at` | TIMESTAMPTZ | |
+| `updated_at` | TIMESTAMPTZ | |
+| `is_deleted` | BOOLEAN, DEFAULT false | |
+
+**Индексы:** `(email)`, `(role, status)`
+
+#### 20.2.2. Таблица `audit_log` (журнал аудита)
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGSERIAL, PK | ID |
+| `user_id` | UUID, FK → users.id | Кто |
+| `action` | VARCHAR(64), NOT NULL | Действие: 'login', 'create_employee', 'bind_device', 'export_report', ... |
+| `entity_type` | VARCHAR(32), NULLABLE | Тип объекта: 'employee', 'device', 'zone', 'anomaly', ... |
+| `entity_id` | VARCHAR(128), NULLABLE | ID объекта |
+| `details_json` | JSONB, NULLABLE | Дополнительные данные (что изменилось) |
+| `ip_address` | VARCHAR(45), NULLABLE | IP-адрес |
+| `user_agent` | VARCHAR(512), NULLABLE | User-Agent |
+| `created_at` | TIMESTAMPTZ, NOT NULL | Когда |
+
+**Индексы:** `(user_id, created_at)`, `(action, created_at)`, `(entity_type, entity_id)`
+
+**Retention:** ≥ 180 дней (согласно ТЗ, п. 7).
+
+### 20.3. Авторизация и проверка доступа
+
+#### 20.3.1. JWT для web-пользователей
+
+```python
+# JWT payload для web-пользователей (отдельно от device-токенов)
+{
+    "sub": "user-uuid",
+    "email": "ivanov@example.com",
+    "role": "manager",
+    "scope_type": "site",
+    "scope_ids": ["site_01", "site_02"],
+    "type": "web",
+    "iat": 1700000000,
+    "exp": 1700028800
+}
+```
+
+**Настройки:**
+- `access_token` TTL: 8 часов
+- `refresh_token` TTL: 30 дней
+- Блокировка после 5 неудачных попыток входа (на 15 минут)
+
+#### 20.3.2. Middleware проверки доступа
+
+```python
+# Декоратор/dependency для эндпоинтов
+def require_role(*roles: str):
+    """Проверяет роль пользователя"""
+
+def require_scope(entity_site_id: str):
+    """Проверяет что entity_site_id входит в scope_ids пользователя"""
+
+def anonymize_for_analyst(data: dict):
+    """Убирает ФИО и персональные данные для роли analyst"""
+```
+
+**Правила:**
+- `admin` — доступ ко всему
+- `operator` — только свои площадки, только привязки/выгрузки
+- `manager` — свои площадки, полная детализация
+- `analyst` — свои площадки, **без ФИО/табельных** (обезличенно, ФЗ-152)
+
+### 20.4. API эндпоинты
+
+#### Аутентификация web-пользователей
+- `POST /api/v1/auth/login` — Вход (email + password → tokens)
+- `POST /api/v1/auth/refresh` — Обновление токена
+- `POST /api/v1/auth/logout` — Выход (отзыв токена)
+- `GET /api/v1/auth/me` — Профиль текущего пользователя
+- `PUT /api/v1/auth/password` — Смена пароля
+
+#### Управление пользователями (только admin)
+- `GET /api/v1/users` — Список пользователей
+- `POST /api/v1/users` — Создать (отправляет пароль на email)
+- `PUT /api/v1/users/{id}` — Обновить роль/scope/статус
+- `POST /api/v1/users/{id}/block` — Заблокировать
+- `POST /api/v1/users/{id}/reset-password` — Сброс пароля
+
+#### Журнал аудита (admin + manager read-only)
+- `GET /api/v1/audit-log` — Лента действий (query: user_id, action, entity_type, date_from, date_to, page)
+- `GET /api/v1/audit-log/export` — Экспорт (CSV)
+
+---
+
+## 21. Флаги качества данных
+
+### 21.1. Типы флагов
+
+| Код | Описание | Условие | Влияние на метрики |
+|-----|----------|---------|-------------------|
+| `NO_BLE` | Нет BLE-данных в пакете | ble_events пустой | Геолокация недоступна, зоны не определены |
+| `NO_WEAR` | Нет данных о ношении | wear_events пустой | Невозможно определить V3 |
+| `NO_HR` | Нет данных пульса | hr_samples пустой | Пульс не учитывается |
+| `INCOMPLETE_PACKET` | Неполный пакет | shift_end - shift_start < ожидаемой длительности | Метрики неточны |
+| `TIME_GAPS` | Разрывы по времени | Разрывы > 10 мин в данных сенсоров | Возможны пропуски интервалов |
+| `LOW_SAMPLE_RATE` | Низкая частота данных | Частота < 50% от ожидаемой (25 Гц для accel) | Классификация менее точна |
+| `SENSOR_FAULT` | Сбой сенсора | Все значения = 0 или NaN длительное время | Данные ненадёжны |
+| `CLOCK_DRIFT` | Рассогласование часов | time_sync.server_time_offset_ms > 60000 (1 мин) | Временные метки неточны |
+
+### 21.2. Таблица `data_quality_flags`
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGSERIAL, PK | ID |
+| `packet_id` | VARCHAR(64), FK → packets.packet_id | Пакет |
+| `shift_id` | UUID, FK → shifts.id | Смена |
+| `flag_type` | VARCHAR(32), NOT NULL | Код флага |
+| `severity` | VARCHAR(16), NOT NULL | 'critical', 'warning', 'info' |
+| `description` | TEXT | Описание ("Нет BLE-данных: геолокация недоступна") |
+| `details_json` | JSONB, NULLABLE | Детали (ожидаемое vs фактическое количество) |
+| `created_at` | TIMESTAMPTZ | |
+
+**Индексы:** `(packet_id)`, `(shift_id)`, `(flag_type)`
+
+### 21.3. Celery задача `check_data_quality`
+
+**Запуск:** После `decrypt_and_parse_packet`, перед `classify_activity`.
+
+```
+1. Проверить наличие каждого типа данных:
+   ├── ble_events пуст? → NO_BLE
+   ├── wear_events пуст? → NO_WEAR
+   └── hr_samples пуст? → NO_HR
+
+2. Проверить полноту пакета:
+   ├── actual_duration = shift_end - shift_start
+   ├── expected_duration = из конфигурации смены
+   └── actual < expected * 0.8 → INCOMPLETE_PACKET
+
+3. Проверить разрывы:
+   ├── Найти gaps > 10 мин в accel данных
+   └── gaps > 0 → TIME_GAPS (указать количество и суммарную длительность)
+
+4. Проверить частоту:
+   ├── actual_rate = count(accel) / duration_sec
+   ├── expected_rate = 25 Гц
+   └── actual < expected * 0.5 → LOW_SAMPLE_RATE
+
+5. Проверить clock drift:
+   └── abs(server_time_offset_ms) > 60000 → CLOCK_DRIFT
+
+6. Рассчитать data_quality_score:
+   ├── score = 1.0
+   ├── Для каждого critical флага: score -= 0.3
+   ├── Для каждого warning флага: score -= 0.1
+   ├── score = max(0.0, score)
+   └── UPDATE shift_metrics SET data_quality_score = score
+
+7. Batch INSERT в data_quality_flags
+```
+
+### 21.4. API
+
+Флаги отображаются в ответах:
+- `GET /api/v1/shifts/{shift_id}` — поле `quality_flags: [...]`
+- `GET /api/v1/shifts/{shift_id}/metrics` — поле `data_quality_score`
+- `GET /api/v1/admin/packets/{packet_id}/log` — поле `quality_flags`
+
+---
+
+## 22. Причины простоя — серверная привязка к интервалам В1
+
+### 22.1. Логика (согласно ТЗ, п. 5.3.4.5)
+
+Причины простоя привязываются к интервалам `activity_class = 'V1'` двумя способами:
+
+1. **С часов** — сотрудник выбирает причину на экране часов (данные в `downtime_reasons` пакета)
+2. **С web** — руководитель/оператор указывает причину при разборе смены
+
+### 22.2. Таблица `downtime_assignments` (привязка причин к интервалам)
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | BIGSERIAL, PK | ID |
+| `activity_interval_id` | BIGINT, FK → activity_intervals.id | Интервал V1 |
+| `shift_id` | UUID, FK → shifts.id | Смена |
+| `reason_id` | VARCHAR(32), FK → downtime_reasons_catalog.id | Код причины |
+| `source` | VARCHAR(16), NOT NULL | 'watch' (с часов) или 'web' (руководителем) |
+| `assigned_by` | UUID, FK → users.id, NULLABLE | Кто назначил (для source='web') |
+| `zone_id` | VARCHAR(64), FK → zones.id, NULLABLE | В какой зоне |
+| `comment` | TEXT, NULLABLE | Комментарий |
+| `created_at` | TIMESTAMPTZ | |
+| `updated_at` | TIMESTAMPTZ | |
+
+**Индексы:** `(shift_id)`, `(reason_id)`, `(activity_interval_id)`
+
+### 22.3. Автоматическая привязка причин с часов
+
+При обработке пакета (`decrypt_and_parse_packet`), после классификации:
+
+```
+1. Для каждого downtime_reason из расшифрованного пакета:
+   ├── Найти activity_interval WHERE class='V1'
+   │   AND start_ts_ms <= reason.ts_ms <= end_ts_ms
+   ├── Если найден → INSERT downtime_assignments (source='watch')
+   └── Если не найден → логировать warning (причина вне интервала V1)
+```
+
+### 22.4. API
+
+- `GET /api/v1/shifts/{shift_id}/downtimes` — Список простоев с причинами
+- `POST /api/v1/shifts/{shift_id}/downtimes/{interval_id}/assign` — Назначить причину (web)
+- `PUT /api/v1/shifts/{shift_id}/downtimes/{interval_id}/assign` — Изменить причину
+
+**Response `GET /api/v1/shifts/{shift_id}/downtimes`:**
+```json
+{
+  "shift_id": "uuid",
+  "downtimes": [
+    {
+      "interval_id": 1234,
+      "start_ts_ms": 1700010000000,
+      "end_ts_ms": 1700010900000,
+      "duration_sec": 900,
+      "zone_id": "zone_01",
+      "zone_name": "КУГ-2 (секция 1)",
+      "reason_id": "wait_material",
+      "reason_name": "Жду материал",
+      "source": "watch",
+      "assigned_by": null
+    }
+  ],
+  "total_downtime_sec": 900,
+  "reasons_summary": [
+    { "reason_id": "wait_material", "reason_name": "Жду материал", "total_sec": 900, "count": 1 }
+  ]
+}
+```
+
+Аудит: история изменений причин записывается в `audit_log`.
+
+---
+
+## 23. GATEWAY-режим (приём от мобильного шлюза)
+
+### 23.1. Назначение
+
+Мобильное приложение оператора (шлюз) считывает данные с часов по Bluetooth и передаёт на сервер. В отличие от DIRECT-режима (часы → сервер), здесь промежуточным звеном выступает смартфон оператора.
+
+### 23.2. `POST /api/v1/gateway/packets` — Приём пакета от шлюза
+
+**Доступ:** `Authorization: Bearer <web_token>` (роль: operator).
+
+**Request Body (расширенный UploadRequest):**
+```json
+{
+  "packet_id": "uuid",
+  "device_id": "dev_a1b2c3d4e5f6",
+  "shift_start_ts": 1700000000000,
+  "shift_end_ts": 1700043200000,
+  "schema_version": 1,
+  "payload_enc": "Base64...",
+  "payload_key_enc": "Base64...",
+  "iv": "Base64...",
+  "payload_hash": "sha256hex...",
+  
+  "operator_id": "uuid",
+  "site_id": "site_01",
+  "employee_id": "uuid",
+  "binding_id": 1234,
+  "uploaded_from": "gateway",
+  "gateway_device_info": {
+    "model": "Samsung Galaxy Tab A9",
+    "os_version": "Android 14",
+    "app_version": "1.0.0"
+  }
+}
+```
+
+**Логика:**
+1. Валидация оператора (JWT web-token, роль = operator).
+2. Проверка что operator имеет доступ к site_id.
+3. Проверка что device_id привязан к employee_id (через device_bindings).
+4. Далее — аналогично `POST /api/v1/watch/packets` (идемпотентность, сохранение, Celery task).
+5. Дополнительно: записать `operator_id` и `uploaded_from = 'gateway'` в packets.
+
+**Response:** Аналогично 4.2.1 (202 Accepted / 409 Conflict).
+
+### 23.3. Отличия от DIRECT-режима
+
+| Аспект | DIRECT (часы → сервер) | GATEWAY (часы → шлюз → сервер) |
+|--------|------------------------|-------------------------------|
+| Аутентификация | Device JWT (device_id + device_secret) | Web JWT (operator email + password) |
+| Знает employee_id | Нет (привязка на сервере по device_bindings) | Да (оператор указывает при выгрузке) |
+| Канал | Wi-Fi/LTE с часов | BLE → смартфон → Wi-Fi/LTE |
+| Оффлайн | Очередь на часах (WorkManager) | Очередь на смартфоне (локальная БД) |
+| Поле uploaded_from | 'direct' | 'gateway' |
+
+---
+
+## 24. Обновлённый конвейер обработки данных (полная схема)
+
+```
+Часы → [DIRECT: POST /watch/packets] → Сервер
+    или
+Часы → BLE → Шлюз → [GATEWAY: POST /gateway/packets] → Сервер
+
+Сервер:
+  1. Приём пакета (202 Accepted)
+     └── Сохранение в packets, idempotency_keys
+
+  2. [Celery] decrypt_and_parse_packet
+     ├── Расшифровка (RSA-OAEP + AES-256-GCM)
+     ├── Проверка SHA-256 хеша
+     ├── Парсинг JSON (ShiftPacketSchema)
+     └── Batch INSERT сырых данных (9 таблиц)
+
+  3. [Celery] check_data_quality
+     └── Флаги качества → data_quality_flags
+
+  4. [Celery] build_zone_visits
+     ├── beacon_id → zone_id (через zone_beacons)
+     ├── Формирование интервалов посещения зон
+     ├── Сглаживание дребезга
+     └── Маршрут перемещений → zone_visits
+
+  5. [Celery] classify_activity
+     ├── Feature extraction (окна 10 сек)
+     ├── Классификация A1/A2/B1/B2/V1/V2/V3/V4
+     ├── Постобработка (медианный фильтр, merge)
+     └── → activity_intervals
+
+  6. [Celery] calculate_shift_metrics
+     ├── Выработка (%), V1%, время реакции
+     ├── Привязка причин простоя (с часов → V1 интервалы)
+     └── → shift_metrics, reaction_times, downtime_assignments
+
+  7. [Celery] detect_anomalies
+     ├── 7 типов проверок
+     └── → anomalies
+
+  Статус пакета: accepted → decrypting → parsing → processing → processed
+```
+
+---
+
+## 25. Обновлённые итерации реализации
+
+### Итерация B1 — Инфраструктура и приём пакетов (1-2 недели)
+_(без изменений, см. раздел 12)_
+
+### Итерация B2 — Аутентификация устройств (1 неделя)
+_(без изменений, см. раздел 12)_
+
+### Итерация B3 — Криптография и парсинг (1-2 недели)
+_(без изменений, см. раздел 12)_
+
+### Итерация B4 — Справочники и RBAC (1-2 недели)
+
+- [ ] Таблицы: `sites`, `zones`, `zone_beacons`, `companies`, `brigades`, расширенная `employees`
+- [ ] Таблицы: `users`, `audit_log`, `downtime_reasons_catalog`, `device_bindings`
+- [ ] CRUD для справочников (зоны, сотрудники, компании, бригады, причины простоя)
+- [ ] Привязки часов (device_bindings)
+- [ ] RBAC: JWT web-пользователей, middleware require_role/require_scope
+- [ ] Аутентификация web: login/refresh/logout/me/password
+- [ ] Управление пользователями (admin)
+- [ ] Журнал аудита
+- [ ] Тесты RBAC + справочники
+
+### Итерация B5 — Геолокация, классификация и метрики (2-3 недели)
+
+- [ ] Таблицы: `zone_visits`, `unknown_beacons`, `activity_intervals`, `classification_configs`
+- [ ] Таблицы: `shift_metrics`, `reaction_times`, `data_quality_flags`, `downtime_assignments`
+- [ ] Celery: `check_data_quality`
+- [ ] Celery: `build_zone_visits` (BLE → зоны, маршрут, дребезг)
+- [ ] Celery: `classify_activity` (feature extraction + rule-based классификация)
+- [ ] Celery: `calculate_shift_metrics` (выработка, V1%, время реакции)
+- [ ] Celery: привязка причин простоя с часов к интервалам V1
+- [ ] API: `/shifts/{id}/zones`, `/shifts/{id}/route`
+- [ ] API: `/shifts/{id}/activity`, `/shifts/{id}/metrics`
+- [ ] API: `/analytics/productivity`
+- [ ] API: `/shifts/{id}/reaction-times`, `/shifts/{id}/downtimes`
+- [ ] Тесты классификации и метрик
+
+**Критерий готовности:** Пакет обрабатывается до конца: сырые данные → зоны → классы A1-V4 → выработка и метрики в БД.
+
+### Итерация B6 — Антифрод и аномалии (1 неделя)
+
+- [ ] Таблица `anomalies`
+- [ ] Celery: `detect_anomalies` (7 типов проверок)
+- [ ] API: `/shifts/{id}/anomalies`, `/anomalies`, `PATCH /anomalies/{id}`
+- [ ] Конфигурация аномалий (AnomalyConfig)
+- [ ] Тесты антифрод-правил
+
+### Итерация B7 — Heartbeat, GATEWAY и продакшн (1-2 недели)
+
+- [ ] Heartbeat (см. раздел 4.3)
+- [ ] `POST /api/v1/gateway/packets` (GATEWAY-режим)
+- [ ] Rate limiting, HTTPS, structured logging
+- [ ] Health check, нагрузочные тесты
+- [ ] Celery Beat расписание (очистки, проверка здоровья)
+- [ ] CI/CD, Swagger финализация
+- [ ] Интеграционные тесты (полный конвейер)
+
+**Общая оценка: 9-14 недель (2-3.5 месяца)**
