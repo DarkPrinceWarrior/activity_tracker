@@ -139,7 +139,7 @@ class CollectorService : Service() {
         collectionJobs.add(
             serviceScope.launch {
                 bleAggregator.collectAndStore(
-                    bleScanner.scanBeacons(serviceScope),
+                    bleScanner.scanBeacons(),
                     serviceScope
                 )
             }

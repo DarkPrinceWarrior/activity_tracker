@@ -11,7 +11,6 @@ import android.content.Context
 import android.util.Log
 import com.example.activity_tracker.ble.model.BleBeacon
 import com.example.activity_tracker.ble.model.BleProfile
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
@@ -49,7 +48,7 @@ class BleScanner(context: Context) {
      * Создает Flow для периодического сканирования BLE-меток
      */
     @SuppressLint("MissingPermission")
-    fun scanBeacons(scope: CoroutineScope): Flow<BleBeacon> = callbackFlow {
+    fun scanBeacons(): Flow<BleBeacon> = callbackFlow {
         val scanner = bleScanner
         if (scanner == null) {
             Log.e(TAG, "BLE scanner not available")
@@ -93,8 +92,8 @@ class BleScanner(context: Context) {
             }
         }
 
-        // Периодическое сканирование окнами
-        scanJob = scope.launch {
+        // Периодическое сканирование окнами (запускаем в scope самого callbackFlow)
+        scanJob = launch {
             while (isActive) {
                 try {
                     // Начало окна сканирования
