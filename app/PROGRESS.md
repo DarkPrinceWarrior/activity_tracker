@@ -141,3 +141,27 @@
 **Статус:** Готовы к Итерации 2 - упаковка и шифрование пакетов
 
 **Следующий шаг:** PacketBuilder - формирование пакета смены в JSON
+
+---
+
+## ИТЕРАЦИЯ 2 — Сбор пакета, шифрование и очередь
+
+### 2026-02-25 - Итерация 2
+
+#### ✅ Шаг 11: PacketBuilder — формирование JSON-пакета смены (ЗАВЕРШЕН)
+- Созданы модели пакета в `packet/model/ShiftPacket.kt`:
+  - `ShiftPacket` — корневая структура (schema_version, packet_id, device, shift, samples, meta)
+  - `DeviceInfo` — информация об устройстве (device_id, model, fw, app_version, tz)
+  - `ShiftPeriod` — период смены (start_ts_ms, end_ts_ms)
+  - `TimeSync` — синхронизация времени (server_time_offset_ms, server_time_ms)
+  - `ShiftSamples` — все типы данных (accel, gyro, baro, mag, hr, ble, wear, battery, downtime_reason)
+  - Sample-классы для каждого типа данных
+  - `PacketMeta` — метаданные пакета (created_ts_ms, seq, upload_attempt)
+- Создан `PacketBuilder` в `packet/PacketBuilder.kt`:
+  - Выборка всех 8 типов данных из Room за период [startTs, endTs]
+  - Маппинг entity → модель пакета
+  - `build(startTs, endTs, seq)` → `ShiftPacket`
+  - `toJson(packet)` → JSON-строка (Gson)
+  - `sizeBytes(packet)` — размер JSON в байтах
+  - `device_id` генерируется UUID и сохраняется в SharedPreferences
+  - Логирование размеров всех коллекций
