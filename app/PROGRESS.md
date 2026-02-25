@@ -165,3 +165,50 @@
   - `sizeBytes(packet)` — размер JSON в байтах
   - `device_id` генерируется UUID и сохраняется в SharedPreferences
   - Логирование размеров всех коллекций
+
+#### ✅ Шаг 12: CryptoManager — AES-256-GCM шифрование (ЗАВЕРШЕН)
+- Создан `crypto/CryptoManager.kt`:
+  - Гибридная схема шифрования (envelope encryption) согласно секции 9.2
+  - Генерация случайного AES-256 ключа на каждый пакет
+  - Шифрование контента: AES-256-GCM (IV=12 байт, тег=128 бит)
+  - Шифрование data_key: RSA/OAEP с SHA-256 публичным ключом сервера
+  - SHA-256 хэш от plaintext для проверки целостности на сервере
+  - Результат `EncryptedPacket`: payloadEncBase64, payloadKeyEncBase64, ivBase64, payloadHashSha256
+  - `getServerPublicKeyBytes()` — TODO-заглушка до получения ключа от бэкенда
+  - Fallback/placeholder при отсутствии ключа сервера (для разработки)
+
+#### ✅ Шаг 13: PacketPipeline — оркестрация сборки, шифрования и очереди (ЗАВЕРШЕН)
+- Создан `packet/PacketPipeline.kt`:
+  - `buildAndEnqueue(startTs, endTs, seq)` — полный цикл: Room → JSON → AES-GCM → диск → packet_queue
+  - Сохранение зашифрованного payload в `files/packets/<packet_id>.enc`
+  - Запись `PacketQueueEntity` в БД со статусом `pending`
+  - Статусы пакетов: `pending`, `uploading`, `uploaded`, `error`
+  - `readPayloadFromDisk(path)` и `deletePayload(path)` для управления файлами
+  - Возвращает `PipelineResult` (packetId, payloadSizeBytes, payloadPath)
+
+#### ✅ Шаг 14: Расширение UI — статус пакетов в StatusScreen (ЗАВЕРШЕН)
+- Обновлён `StatusViewModel`:
+  - Хранит `shiftStartTs` при старте сбора
+  - При остановке автоматически вызывает `PacketPipeline.buildAndEnqueue()`
+  - `pendingPacketsCount: StateFlow<Int>` — наблюдение за очередью (status=pending)
+  - `uploadedPacketsCount: StateFlow<Int>` — наблюдение за отправленными (status=uploaded)
+- Обновлён `StatusScreen`:
+  - Новые параметры `pendingPackets` и `uploadedPackets`
+  - Отображение "В очереди: N пак." (желтый/secondary цвет)
+  - Отображение "Отправлено: N пак." (зеленый/primary цвет)
+  - Индикатор активности встроен в текст статуса "● Сбор активен"
+- Обновлён `MainActivity`: передача новых параметров через `collectAsState()`
+
+---
+
+## 🎉 ИТЕРАЦИЯ 2 ЗАВЕРШЕНА! 🎉
+
+Готова система упаковки и шифрования пакетов:
+- ✅ PacketBuilder — выборка данных из Room за период → JSON по схеме 9.6
+- ✅ CryptoManager — AES-256-GCM + RSA-OAEP (envelope encryption)
+- ✅ PacketPipeline — оркестрация builder→crypto→queue
+- ✅ UI статуса очереди пакетов
+
+**Статус:** Готовы к Итерации 3 — сетевая синхронизация (NetworkUploader, WorkManager)
+
+**Следующий шаг:** NetworkUploader — отправка пакетов на сервер (DIRECT)

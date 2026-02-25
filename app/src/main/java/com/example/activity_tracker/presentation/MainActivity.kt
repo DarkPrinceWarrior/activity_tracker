@@ -66,9 +66,13 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun ActivityTrackerApp(viewModel: StatusViewModel) {
     val isCollecting by viewModel.isCollecting.collectAsState()
+    val pendingPackets by viewModel.pendingPacketsCount.collectAsState()
+    val uploadedPackets by viewModel.uploadedPacketsCount.collectAsState()
 
     StatusScreen(
         isCollecting = isCollecting,
+        pendingPackets = pendingPackets,
+        uploadedPackets = uploadedPackets,
         onStartClick = { viewModel.startCollection() },
         onStopClick = { viewModel.stopCollection() }
     )
