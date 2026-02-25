@@ -4,6 +4,7 @@ import android.util.Log
 import com.example.activity_tracker.battery.model.BatterySample
 import com.example.activity_tracker.data.local.entity.BatteryEntity
 import com.example.activity_tracker.data.repository.SamplesRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -26,6 +27,7 @@ class BatteryDataAggregator(
         scope.launch {
             batteryFlow
                 .catch { e ->
+                    if (e is CancellationException) throw e
                     Log.e(TAG, "Error collecting battery data", e)
                 }
                 .collect { sample ->

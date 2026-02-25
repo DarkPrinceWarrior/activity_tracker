@@ -26,7 +26,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Foreground Service для непрерывного сбора данных с сенсоров, BLE и wear-событий
@@ -189,6 +192,12 @@ class CollectorService : Service() {
         Log.d(TAG, "Stopping data collection")
         // Отменяем ВСЕ корутины включая вложенные job'ы агрегаторов
         serviceJob.cancel()
+        // Ждём завершения корутин, чтобы awaitClose успел отменить ресиверы
+        runBlocking {
+            withTimeoutOrNull(3000L) {
+                collectionJobs.joinAll()
+            }
+        }
         collectionJobs.clear()
         Log.d(TAG, "All coroutines cancelled")
         stopSelf()

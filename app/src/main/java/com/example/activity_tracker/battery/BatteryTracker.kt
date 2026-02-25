@@ -80,7 +80,11 @@ class BatteryTracker(private val context: Context) {
         }
 
         awaitClose {
-            context.unregisterReceiver(receiver)
+            try {
+                context.unregisterReceiver(receiver)
+            } catch (e: IllegalArgumentException) {
+                Log.w(TAG, "Receiver already unregistered", e)
+            }
             Log.d(TAG, "Battery tracking stopped")
         }
     }

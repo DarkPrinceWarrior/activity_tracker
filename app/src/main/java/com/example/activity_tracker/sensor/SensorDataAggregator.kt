@@ -7,6 +7,7 @@ import com.example.activity_tracker.data.local.entity.SensorSampleEntity
 import com.example.activity_tracker.data.repository.SamplesRepository
 import com.example.activity_tracker.sensor.model.SensorSample
 import com.example.activity_tracker.sensor.model.SensorType
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
@@ -38,6 +39,7 @@ class SensorDataAggregator(
             sensorFlow
                 .buffer(capacity = 200)
                 .catch { e ->
+                    if (e is CancellationException) throw e
                     Log.e(TAG, "Error collecting sensor data", e)
                 }
                 .collect { sample ->

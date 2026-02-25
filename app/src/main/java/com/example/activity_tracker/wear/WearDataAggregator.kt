@@ -4,6 +4,7 @@ import android.util.Log
 import com.example.activity_tracker.data.local.entity.WearEventEntity
 import com.example.activity_tracker.data.repository.SamplesRepository
 import com.example.activity_tracker.wear.model.WearState
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -25,6 +26,7 @@ class WearDataAggregator(
         scope.launch {
             wearStateFlow
                 .catch { e ->
+                    if (e is CancellationException) throw e
                     Log.e(TAG, "Error collecting wear state", e)
                 }
                 .collect { wearState ->

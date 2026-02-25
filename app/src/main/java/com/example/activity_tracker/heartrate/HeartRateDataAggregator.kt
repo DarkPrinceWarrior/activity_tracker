@@ -4,6 +4,7 @@ import android.util.Log
 import com.example.activity_tracker.data.local.entity.HeartRateEntity
 import com.example.activity_tracker.data.repository.SamplesRepository
 import com.example.activity_tracker.heartrate.model.HeartRateSample
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
@@ -33,6 +34,7 @@ class HeartRateDataAggregator(
             heartRateFlow
                 .buffer(capacity = 50)
                 .catch { e ->
+                    if (e is CancellationException) throw e
                     Log.e(TAG, "Error collecting heart rate", e)
                 }
                 .collect { sample ->

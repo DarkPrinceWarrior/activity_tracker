@@ -4,6 +4,7 @@ import android.util.Log
 import com.example.activity_tracker.ble.model.BleBeacon
 import com.example.activity_tracker.data.local.entity.BleEventEntity
 import com.example.activity_tracker.data.repository.SamplesRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
@@ -33,6 +34,7 @@ class BleDataAggregator(
             bleFlow
                 .buffer(capacity = 100)
                 .catch { e ->
+                    if (e is CancellationException) throw e
                     Log.e(TAG, "Error collecting BLE beacons", e)
                 }
                 .collect { beacon ->

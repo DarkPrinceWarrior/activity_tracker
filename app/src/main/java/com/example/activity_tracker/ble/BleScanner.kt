@@ -11,6 +11,7 @@ import android.content.Context
 import android.util.Log
 import com.example.activity_tracker.ble.model.BleBeacon
 import com.example.activity_tracker.ble.model.BleProfile
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
@@ -113,6 +114,8 @@ class BleScanner(context: Context) {
                         Log.d(TAG, "BLE scan paused for ${pauseDuration}ms")
                         delay(pauseDuration)
                     }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     Log.e(TAG, "Error during BLE scan", e)
                     delay(5000) // Пауза перед повторной попыткой
