@@ -5,11 +5,9 @@ import com.example.activity_tracker.data.local.entity.HeartRateEntity
 import com.example.activity_tracker.data.repository.SamplesRepository
 import com.example.activity_tracker.heartrate.model.HeartRateSample
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -26,21 +24,18 @@ class HeartRateDataAggregator(
     /**
      * Подписывается на Flow пульса и сохраняет в БД пакетами
      */
-    fun collectAndStore(
-        heartRateFlow: Flow<HeartRateSample>,
-        scope: CoroutineScope
+    suspend fun collectAndStore(
+        heartRateFlow: Flow<HeartRateSample>
     ) {
-        scope.launch {
-            heartRateFlow
-                .buffer(capacity = 50)
-                .catch { e ->
-                    if (e is CancellationException) throw e
-                    Log.e(TAG, "Error collecting heart rate", e)
-                }
-                .collect { sample ->
-                    bufferSample(sample)
-                }
-        }
+        heartRateFlow
+            .buffer(capacity = 50)
+            .catch { e ->
+                if (e is CancellationException) throw e
+                Log.e(TAG, "Error collecting heart rate", e)
+            }
+            .collect { sample ->
+                bufferSample(sample)
+            }
     }
 
     private suspend fun bufferSample(sample: HeartRateSample) {

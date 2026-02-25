@@ -25,7 +25,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -109,8 +108,7 @@ class CollectorService : Service() {
         collectionJobs.add(
             serviceScope.launch {
                 sensorAggregator.collectAndStore(
-                    sensorCollector.collectAccelerometer(),
-                    serviceScope
+                    sensorCollector.collectAccelerometer()
                 )
             }
         )
@@ -119,8 +117,7 @@ class CollectorService : Service() {
         collectionJobs.add(
             serviceScope.launch {
                 sensorAggregator.collectAndStore(
-                    sensorCollector.collectGyroscope(),
-                    serviceScope
+                    sensorCollector.collectGyroscope()
                 )
             }
         )
@@ -129,8 +126,7 @@ class CollectorService : Service() {
         collectionJobs.add(
             serviceScope.launch {
                 sensorAggregator.collectAndStore(
-                    sensorCollector.collectBarometer(),
-                    serviceScope
+                    sensorCollector.collectBarometer()
                 )
             }
         )
@@ -139,8 +135,7 @@ class CollectorService : Service() {
         collectionJobs.add(
             serviceScope.launch {
                 sensorAggregator.collectAndStore(
-                    sensorCollector.collectMagnetometer(),
-                    serviceScope
+                    sensorCollector.collectMagnetometer()
                 )
             }
         )
@@ -149,8 +144,7 @@ class CollectorService : Service() {
         collectionJobs.add(
             serviceScope.launch {
                 bleAggregator.collectAndStore(
-                    bleScanner.scanBeacons(),
-                    serviceScope
+                    bleScanner.scanBeacons()
                 )
             }
         )
@@ -159,8 +153,7 @@ class CollectorService : Service() {
         collectionJobs.add(
             serviceScope.launch {
                 wearAggregator.collectAndStore(
-                    wearStateTracker.trackWearState(),
-                    serviceScope
+                    wearStateTracker.trackWearState()
                 )
             }
         )
@@ -169,8 +162,7 @@ class CollectorService : Service() {
         collectionJobs.add(
             serviceScope.launch {
                 heartRateAggregator.collectAndStore(
-                    heartRateCollector.collectHeartRate(),
-                    serviceScope
+                    heartRateCollector.collectHeartRate()
                 )
             }
         )
@@ -179,8 +171,7 @@ class CollectorService : Service() {
         collectionJobs.add(
             serviceScope.launch {
                 batteryAggregator.collectAndStore(
-                    batteryTracker.trackBattery(),
-                    serviceScope
+                    batteryTracker.trackBattery()
                 )
             }
         )
@@ -190,11 +181,11 @@ class CollectorService : Service() {
 
     private fun stopDataCollection() {
         Log.d(TAG, "Stopping data collection")
-        // Отменяем ВСЕ корутины включая вложенные job'ы агрегаторов
-        serviceJob.cancel()
+        // Отменяем каждый collection job напрямую
+        collectionJobs.forEach { it.cancel() }
         // Ждём завершения корутин, чтобы awaitClose успел отменить ресиверы
         runBlocking {
-            withTimeoutOrNull(3000L) {
+            withTimeoutOrNull(5000L) {
                 collectionJobs.joinAll()
             }
         }

@@ -8,11 +8,9 @@ import com.example.activity_tracker.data.repository.SamplesRepository
 import com.example.activity_tracker.sensor.model.SensorSample
 import com.example.activity_tracker.sensor.model.SensorType
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -31,21 +29,18 @@ class SensorDataAggregator(
     /**
      * Подписывается на Flow сенсоров и сохраняет данные
      */
-    fun collectAndStore(
-        sensorFlow: Flow<SensorSample>,
-        scope: CoroutineScope
+    suspend fun collectAndStore(
+        sensorFlow: Flow<SensorSample>
     ) {
-        scope.launch {
-            sensorFlow
-                .buffer(capacity = 200)
-                .catch { e ->
-                    if (e is CancellationException) throw e
-                    Log.e(TAG, "Error collecting sensor data", e)
-                }
-                .collect { sample ->
-                    bufferSample(sample)
-                }
-        }
+        sensorFlow
+            .buffer(capacity = 200)
+            .catch { e ->
+                if (e is CancellationException) throw e
+                Log.e(TAG, "Error collecting sensor data", e)
+            }
+            .collect { sample ->
+                bufferSample(sample)
+            }
     }
 
     private suspend fun bufferSample(sample: SensorSample) {

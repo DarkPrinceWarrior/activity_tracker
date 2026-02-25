@@ -5,10 +5,8 @@ import com.example.activity_tracker.data.local.entity.WearEventEntity
 import com.example.activity_tracker.data.repository.SamplesRepository
 import com.example.activity_tracker.wear.model.WearState
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.launch
 
 /**
  * Агрегатор событий ношения часов для записи в БД
@@ -19,20 +17,17 @@ class WearDataAggregator(
     /**
      * Подписывается на Flow событий ношения и сохраняет в БД
      */
-    fun collectAndStore(
-        wearStateFlow: Flow<WearState>,
-        scope: CoroutineScope
+    suspend fun collectAndStore(
+        wearStateFlow: Flow<WearState>
     ) {
-        scope.launch {
-            wearStateFlow
-                .catch { e ->
-                    if (e is CancellationException) throw e
-                    Log.e(TAG, "Error collecting wear state", e)
-                }
-                .collect { wearState ->
-                    saveWearEvent(wearState)
-                }
-        }
+        wearStateFlow
+            .catch { e ->
+                if (e is CancellationException) throw e
+                Log.e(TAG, "Error collecting wear state", e)
+            }
+            .collect { wearState ->
+                saveWearEvent(wearState)
+            }
     }
 
     private suspend fun saveWearEvent(wearState: WearState) {

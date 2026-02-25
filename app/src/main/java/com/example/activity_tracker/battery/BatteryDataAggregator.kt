@@ -5,10 +5,8 @@ import com.example.activity_tracker.battery.model.BatterySample
 import com.example.activity_tracker.data.local.entity.BatteryEntity
 import com.example.activity_tracker.data.repository.SamplesRepository
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.launch
 
 /**
  * Агрегатор событий батареи для записи в БД
@@ -20,20 +18,17 @@ class BatteryDataAggregator(
     /**
      * Подписывается на Flow батареи и сохраняет в БД
      */
-    fun collectAndStore(
-        batteryFlow: Flow<BatterySample>,
-        scope: CoroutineScope
+    suspend fun collectAndStore(
+        batteryFlow: Flow<BatterySample>
     ) {
-        scope.launch {
-            batteryFlow
-                .catch { e ->
-                    if (e is CancellationException) throw e
-                    Log.e(TAG, "Error collecting battery data", e)
-                }
-                .collect { sample ->
-                    saveBatterySample(sample)
-                }
-        }
+        batteryFlow
+            .catch { e ->
+                if (e is CancellationException) throw e
+                Log.e(TAG, "Error collecting battery data", e)
+            }
+            .collect { sample ->
+                saveBatterySample(sample)
+            }
     }
 
     private suspend fun saveBatterySample(sample: BatterySample) {

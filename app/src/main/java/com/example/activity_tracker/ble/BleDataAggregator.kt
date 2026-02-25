@@ -5,11 +5,9 @@ import com.example.activity_tracker.ble.model.BleBeacon
 import com.example.activity_tracker.data.local.entity.BleEventEntity
 import com.example.activity_tracker.data.repository.SamplesRepository
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -26,21 +24,18 @@ class BleDataAggregator(
     /**
      * Подписывается на Flow BLE-событий и сохраняет в БД пакетами
      */
-    fun collectAndStore(
-        bleFlow: Flow<BleBeacon>,
-        scope: CoroutineScope
+    suspend fun collectAndStore(
+        bleFlow: Flow<BleBeacon>
     ) {
-        scope.launch {
-            bleFlow
-                .buffer(capacity = 100)
-                .catch { e ->
-                    if (e is CancellationException) throw e
-                    Log.e(TAG, "Error collecting BLE beacons", e)
-                }
-                .collect { beacon ->
-                    bufferBeacon(beacon)
-                }
-        }
+        bleFlow
+            .buffer(capacity = 100)
+            .catch { e ->
+                if (e is CancellationException) throw e
+                Log.e(TAG, "Error collecting BLE beacons", e)
+            }
+            .collect { beacon ->
+                bufferBeacon(beacon)
+            }
     }
 
     private suspend fun bufferBeacon(beacon: BleBeacon) {
