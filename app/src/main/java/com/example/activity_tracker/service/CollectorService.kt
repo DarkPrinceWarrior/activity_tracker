@@ -34,7 +34,8 @@ import kotlinx.coroutines.launch
  */
 class CollectorService : Service() {
 
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var serviceJob = SupervisorJob()
+    private var serviceScope = CoroutineScope(serviceJob + Dispatchers.Default)
 
     private lateinit var sensorCollector: SensorCollector
     private lateinit var sensorAggregator: SensorDataAggregator
@@ -94,6 +95,12 @@ class CollectorService : Service() {
 
     private fun startDataCollection() {
         Log.d(TAG, "Starting data collection")
+
+        // Пересоздаём scope если предыдущий был отменён
+        if (serviceJob.isCancelled) {
+            serviceJob = SupervisorJob()
+            serviceScope = CoroutineScope(serviceJob + Dispatchers.Default)
+        }
 
         // Запуск сбора с акселерометра
         collectionJobs.add(
@@ -180,14 +187,17 @@ class CollectorService : Service() {
 
     private fun stopDataCollection() {
         Log.d(TAG, "Stopping data collection")
-        collectionJobs.forEach { it.cancel() }
+        // Отменяем ВСЕ корутины включая вложенные job'ы агрегаторов
+        serviceJob.cancel()
         collectionJobs.clear()
+        Log.d(TAG, "All coroutines cancelled")
+        stopSelf()
     }
 
     override fun onDestroy() {
         Log.d(TAG, "CollectorService destroyed")
-        stopDataCollection()
-        serviceScope.cancel()
+        serviceJob.cancel()
+        collectionJobs.clear()
         super.onDestroy()
     }
 
