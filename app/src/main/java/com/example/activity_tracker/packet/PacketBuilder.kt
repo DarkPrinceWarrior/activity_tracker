@@ -94,7 +94,7 @@ class PacketBuilder(
                 ble = bleList,
                 wear = wearList,
                 battery = batteryList,
-                downtime_reason = downtimeList
+                downtime_reasons = downtimeList
             ),
             meta = PacketMeta(
                 created_ts_ms = System.currentTimeMillis(),

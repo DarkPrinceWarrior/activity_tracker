@@ -42,7 +42,7 @@ data class ShiftSamples(
     val ble: List<BleSample>,
     val wear: List<WearSample>,
     val battery: List<BatterySample>,
-    val downtime_reason: List<DowntimeSample>
+    val downtime_reasons: List<DowntimeSample>
 )
 
 data class AccelSample(

@@ -87,6 +87,9 @@ class AuthManager(
                 response.code() == 409 -> {
                     Result.failure(AuthException("Код уже использован", response.code()))
                 }
+                response.code() == 410 -> {
+                    Result.failure(AuthException("Код регистрации истёк", response.code()))
+                }
                 else -> {
                     Result.failure(AuthException("Ошибка регистрации: ${response.code()}", response.code()))
                 }

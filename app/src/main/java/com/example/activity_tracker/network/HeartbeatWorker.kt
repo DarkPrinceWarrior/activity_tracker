@@ -83,7 +83,8 @@ class HeartbeatWorker(
         val batteryStatus: Intent? = context.registerReceiver(null, filter)
         val level = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
         val scale = batteryStatus?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
-        return if (level >= 0 && scale > 0) level.toFloat() / scale.toFloat() else 0f
+        // Возвращаем 0–100 (бэкенд валидирует ge=0, le=100)
+        return if (level >= 0 && scale > 0) (level.toFloat() / scale.toFloat()) * 100f else 0f
     }
 
     private fun isServiceRunning(): Boolean {
