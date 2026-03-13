@@ -256,6 +256,9 @@ class AuthManager(
             ?: return Result.failure(AuthException("Устройство не зарегистрировано", 0))
 
         return try {
+            // Получаем access token (с auto-refresh)
+            val accessToken = getAccessToken()
+
             val request = HeartbeatRequest(
                 device_id = deviceId,
                 device_time_ms = System.currentTimeMillis(),
@@ -264,13 +267,35 @@ class AuthManager(
                 pending_packets = pendingPackets
             )
 
-            val response = authService.heartbeat(request)
+            val response = authService.heartbeat(
+                authorization = "Bearer $accessToken",
+                request = request
+            )
 
             when {
                 response.isSuccessful -> {
                     val body = response.body()!!
                     Log.d(TAG, "Heartbeat OK, time_offset=${body.time_offset_ms}ms")
                     Result.success(body)
+                }
+                response.code() == 401 -> {
+                    // Токен протух — обновляем и пробуем ещё раз
+                    Log.w(TAG, "Heartbeat 401, refreshing token...")
+                    val refreshResult = refreshAccessToken()
+                    if (refreshResult.isSuccess) {
+                        val newToken = getAccessToken()
+                        val retryResponse = authService.heartbeat(
+                            authorization = "Bearer $newToken",
+                            request = request
+                        )
+                        if (retryResponse.isSuccessful) {
+                            Result.success(retryResponse.body()!!)
+                        } else {
+                            Result.failure(AuthException("Heartbeat retry failed: ${retryResponse.code()}", retryResponse.code()))
+                        }
+                    } else {
+                        Result.failure(AuthException("Token refresh failed for heartbeat", 401))
+                    }
                 }
                 response.code() == 403 -> {
                     Result.failure(AuthException("Устройство REVOKED", response.code()))

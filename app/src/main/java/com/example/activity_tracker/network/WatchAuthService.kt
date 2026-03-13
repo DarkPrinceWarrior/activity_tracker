@@ -59,6 +59,7 @@ interface WatchAuthService {
      */
     @POST("watch/heartbeat")
     suspend fun heartbeat(
+        @Header("Authorization") authorization: String,
         @Body request: HeartbeatRequest
     ): Response<HeartbeatResponse>
 }
