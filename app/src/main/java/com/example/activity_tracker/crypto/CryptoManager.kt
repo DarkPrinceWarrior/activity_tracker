@@ -11,52 +11,87 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /**
- * Шифрование пакета смены согласно секции 9.2 плана:
+ * Шифрование пакета смены:
  * 1. Генерируем случайный data_key (AES-256-GCM) на каждый пакет
  * 2. Шифруем контент пакета data_key
  * 3. Шифруем data_key публичным ключом сервера (RSA/OAEP)
  * 4. Передаем payload_enc + payload_key_enc + IV
+ *
+ * @param serverPublicKeyPem PEM-строка публичного RSA-ключа сервера
+ *        (получена при регистрации устройства из DeviceCredentialsStore)
  */
-class CryptoManager {
+class CryptoManager(
+    private val serverPublicKeyPem: String? = null
+) {
 
     /**
-     * Результат шифрования пакета
+     * Результат подготовки пакета для отправки
      */
     data class EncryptedPacket(
         val payloadEncBase64: String,
         val payloadKeyEncBase64: String,
         val ivBase64: String,
-        val payloadHashSha256: String
+        val payloadHashSha256: String,
+        val payloadSizeBytes: Int
     )
 
     /**
-     * Шифрует plaintext JSON пакета
-     * @param plaintextJson JSON-строка пакета
-     * @return EncryptedPacket с зашифрованными данными в Base64
+     * MVP-режим: НЕ шифруем, только base64-кодируем JSON.
+     * Сервер в текущей MVP-версии НЕ расшифровывает данные.
+     * Он декодирует base64 и проверяет SHA-256 от результата.
+     *
+     * payload_enc  = base64(jsonBytes)
+     * payload_hash = sha256(jsonBytes)
      */
     fun encrypt(plaintextJson: String): EncryptedPacket {
+        val jsonBytes = plaintextJson.toByteArray(Charsets.UTF_8)
+
+        // payload_enc = base64(jsonBytes) — БЕЗ шифрования для MVP
+        val payloadEncBase64 = Base64.encodeToString(jsonBytes, Base64.NO_WRAP)
+
+        // payload_hash = sha256(jsonBytes) — хеш от тех же самых байтов
+        val payloadHash = sha256Hex(jsonBytes)
+
+        Log.d(TAG, "Packet prepared (MVP mode): " +
+                "jsonBytes=${jsonBytes.size}B, base64=${payloadEncBase64.length} chars, hash=$payloadHash")
+
+        // Генерируем валидный 12-байтовый IV (сервер проверяет длину после base64-decode)
+        val iv = generateIv()  // 12 random bytes
+        val ivBase64 = Base64.encodeToString(iv, Base64.NO_WRAP)
+
+        // Dummy payload_key_enc (сервер не расшифровывает в MVP, но поле обязательное)
+        val dummyKeyEnc = Base64.encodeToString("mvp-no-encryption".toByteArray(), Base64.NO_WRAP)
+
+        return EncryptedPacket(
+            payloadEncBase64 = payloadEncBase64,
+            payloadKeyEncBase64 = dummyKeyEnc,
+            ivBase64 = ivBase64,
+            payloadHashSha256 = payloadHash,
+            payloadSizeBytes = jsonBytes.size
+        )
+    }
+
+    /**
+     * Полное шифрование (для прода):
+     * AES-256-GCM для данных + RSA-OAEP для ключа
+     */
+    fun encryptFull(plaintextJson: String): EncryptedPacket {
         val plaintextBytes = plaintextJson.toByteArray(Charsets.UTF_8)
 
-        // 1. Генерация случайного AES-256 ключа для этого пакета
         val dataKey = generateAesKey()
-
-        // 2. Шифрование контента AES-256-GCM
         val iv = generateIv()
         val encryptedPayload = encryptAesGcm(plaintextBytes, dataKey, iv)
-
-        // 3. Шифрование data_key публичным ключом сервера (RSA-OAEP)
         val encryptedDataKey = encryptDataKey(dataKey)
-
-        // 4. SHA-256 от исходных данных для проверки целостности на сервере
         val payloadHash = sha256Hex(plaintextBytes)
 
-        Log.d(TAG, "Packet encrypted: payload=${encryptedPayload.size}B, hash=$payloadHash")
+        Log.d(TAG, "Packet encrypted (FULL): payload=${encryptedPayload.size}B, hash=$payloadHash")
 
         return EncryptedPacket(
             payloadEncBase64 = Base64.encodeToString(encryptedPayload, Base64.NO_WRAP),
             payloadKeyEncBase64 = Base64.encodeToString(encryptedDataKey, Base64.NO_WRAP),
             ivBase64 = Base64.encodeToString(iv, Base64.NO_WRAP),
-            payloadHashSha256 = payloadHash
+            payloadHashSha256 = payloadHash,
+            payloadSizeBytes = plaintextBytes.size
         )
     }
 
@@ -88,20 +123,39 @@ class CryptoManager {
 
         return if (serverPublicKeyBytes != null) {
             try {
-                val keyFactory = KeyFactory.getInstance(RSA_ALGORITHM)
-                val keySpec = X509EncodedKeySpec(serverPublicKeyBytes)
-                val publicKey = keyFactory.generatePublic(keySpec)
+                // Пробуем RSA, потом EC
+                val publicKey = try {
+                    val keyFactory = KeyFactory.getInstance(RSA_ALGORITHM)
+                    val keySpec = X509EncodedKeySpec(serverPublicKeyBytes)
+                    keyFactory.generatePublic(keySpec)
+                } catch (e: Exception) {
+                    Log.w(TAG, "RSA parse failed, trying EC: ${e.message}")
+                    try {
+                        val keyFactory = KeyFactory.getInstance("EC")
+                        val keySpec = X509EncodedKeySpec(serverPublicKeyBytes)
+                        keyFactory.generatePublic(keySpec)
+                    } catch (e2: Exception) {
+                        Log.e(TAG, "EC parse also failed: ${e2.message}")
+                        throw e  // бросаем оригинальную ошибку
+                    }
+                }
 
-                val cipher = Cipher.getInstance(RSA_OAEP_TRANSFORMATION)
-                cipher.init(Cipher.ENCRYPT_MODE, publicKey)
-                cipher.doFinal(dataKey.encoded)
+                Log.d(TAG, "Server public key parsed: algorithm=${publicKey.algorithm}, format=${publicKey.format}")
+
+                if (publicKey.algorithm == "RSA") {
+                    val cipher = Cipher.getInstance(RSA_OAEP_TRANSFORMATION)
+                    cipher.init(Cipher.ENCRYPT_MODE, publicKey)
+                    cipher.doFinal(dataKey.encoded)
+                } else {
+                    // Для EC/других ключей — пока заглушка, т.к. EC не поддерживает прямое шифрование
+                    Log.w(TAG, "Server key is ${publicKey.algorithm}, not RSA — key encryption not supported yet")
+                    "UNSUPPORTED_KEY_TYPE_${publicKey.algorithm}".toByteArray()
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to encrypt data_key with server public key", e)
-                // Fallback: возвращаем key_enc как заглушку
                 "PLACEHOLDER_KEY_ENC".toByteArray()
             }
         } else {
-            // TODO: Заменить заглушку на реальный публичный ключ сервера
             Log.w(TAG, "Server public key not configured — using placeholder")
             "PLACEHOLDER_KEY_ENC_NO_SERVER_KEY".toByteArray()
         }
@@ -114,19 +168,48 @@ class CryptoManager {
     }
 
     /**
-     * Возвращает публичный ключ сервера в DER-формате (X.509).
-     * TODO: Заменить null на реальный ключ после получения от бэкенда.
-     * Способы передачи ключа:
-     *   1. Вшить как Base64-константу после получения от сервера
-     *   2. Загрузить при первой регистрации устройства с сервера
-     *   3. Передать через шлюз при старте смены (GATEWAY-режим)
+     * Парсит PEM-строку публичного ключа сервера → DER (X.509) bytes.
+     * Поддерживает форматы:
+     *   -----BEGIN PUBLIC KEY----- (SPKI / X.509)
+     *   -----BEGIN RSA PUBLIC KEY----- (PKCS#1)
      */
     private fun getServerPublicKeyBytes(): ByteArray? {
-        // TODO: вставить Base64-encoded DER публичный ключ сервера
-        // Пример когда ключ будет получен:
-        // val base64Key = "MIIBIjANBgkqhki..."
-        // return Base64.decode(base64Key, Base64.DEFAULT)
-        return null
+        if (serverPublicKeyPem.isNullOrBlank()) return null
+
+        // Debug: логируем первые/последние символы для диагностики
+        Log.d(TAG, "PEM key length=${serverPublicKeyPem!!.length}, " +
+                "starts with: '${serverPublicKeyPem!!.take(40)}...'")
+
+        return try {
+            val base64Content = serverPublicKeyPem!!
+                // Убираем все варианты PEM-заголовков
+                .replace("-----BEGIN PUBLIC KEY-----", "")
+                .replace("-----END PUBLIC KEY-----", "")
+                .replace("-----BEGIN RSA PUBLIC KEY-----", "")
+                .replace("-----END RSA PUBLIC KEY-----", "")
+                // Убираем все варианты переносов строк
+                .replace("\\n", "")   // литеральная строка \n из JSON
+                .replace("\n", "")    // реальный newline
+                .replace("\r", "")    // carriage return
+                .replace(" ", "")     // пробелы
+                .replace("\t", "")    // табы
+                .trim()
+
+            Log.d(TAG, "Base64 after cleanup, length=${base64Content.length}, " +
+                    "starts with: '${base64Content.take(20)}...'")
+
+            if (base64Content.isEmpty()) {
+                Log.w(TAG, "Server public key PEM is empty after stripping headers")
+                return null
+            }
+
+            val decoded = Base64.decode(base64Content, Base64.DEFAULT)
+            Log.d(TAG, "Decoded key bytes: ${decoded.size} bytes")
+            decoded
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse server public key PEM", e)
+            null
+        }
     }
 
     companion object {

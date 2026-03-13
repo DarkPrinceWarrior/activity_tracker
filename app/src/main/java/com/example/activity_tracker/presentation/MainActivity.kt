@@ -19,6 +19,7 @@ import androidx.compose.runtime.getValue
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.example.activity_tracker.presentation.theme.Activity_trackerTheme
+import com.example.activity_tracker.presentation.ui.RegistrationScreen
 import com.example.activity_tracker.presentation.ui.StatusScreen
 import com.example.activity_tracker.presentation.viewmodel.StatusViewModel
 
@@ -65,17 +66,33 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun ActivityTrackerApp(viewModel: StatusViewModel) {
-    val isCollecting by viewModel.isCollecting.collectAsState()
-    val pendingPackets by viewModel.pendingPacketsCount.collectAsState()
-    val uploadedPackets by viewModel.uploadedPacketsCount.collectAsState()
-    val errorPackets by viewModel.errorPacketsCount.collectAsState()
+    val isRegistered by viewModel.isRegistered.collectAsState()
 
-    StatusScreen(
-        isCollecting = isCollecting,
-        pendingPackets = pendingPackets,
-        uploadedPackets = uploadedPackets,
-        errorPackets = errorPackets,
-        onStartClick = { viewModel.startCollection() },
-        onStopClick = { viewModel.stopCollection() }
-    )
+    if (!isRegistered) {
+        // Экран регистрации устройства
+        val isLoading by viewModel.isAuthLoading.collectAsState()
+        val error by viewModel.authError.collectAsState()
+
+        RegistrationScreen(
+            registrationCode = viewModel.registrationCode,
+            isLoading = isLoading,
+            errorMessage = error,
+            onRegisterClick = { viewModel.registerDevice() }
+        )
+    } else {
+        // Основной экран статуса
+        val isCollecting by viewModel.isCollecting.collectAsState()
+        val pendingPackets by viewModel.pendingPacketsCount.collectAsState()
+        val uploadedPackets by viewModel.uploadedPacketsCount.collectAsState()
+        val errorPackets by viewModel.errorPacketsCount.collectAsState()
+
+        StatusScreen(
+            isCollecting = isCollecting,
+            pendingPackets = pendingPackets,
+            uploadedPackets = uploadedPackets,
+            errorPackets = errorPackets,
+            onStartClick = { viewModel.startCollection() },
+            onStopClick = { viewModel.stopCollection() }
+        )
+    }
 }

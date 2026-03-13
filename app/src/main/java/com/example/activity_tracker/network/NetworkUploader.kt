@@ -142,6 +142,11 @@ class NetworkUploader(
         packet: PacketQueueEntity,
         payloadJson: String
     ): UploadRequest {
+        // payload_size_bytes из сохранённого файла (размер оригинальных jsonBytes)
+        val payloadSizeBytes = try {
+            JSONObject(payloadJson).optInt("payload_size_bytes", 0)
+        } catch (e: Exception) { 0 }
+
         return UploadRequest(
             packet_id = packet.packet_id,
             device_id = extractField(payloadJson, "device_id").ifEmpty {
@@ -153,8 +158,7 @@ class NetworkUploader(
             payload_key_enc = extractField(payloadJson, "payload_key_enc"),
             iv = extractField(payloadJson, "iv"),
             payload_hash = extractField(payloadJson, "payload_hash"),
-            payload_size_bytes = extractField(payloadJson, "payload_enc")
-                .toByteArray().size.takeIf { it > 0 }
+            payload_size_bytes = payloadSizeBytes.takeIf { it > 0 }
         )
     }
 

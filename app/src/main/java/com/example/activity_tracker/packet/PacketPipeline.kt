@@ -12,15 +12,17 @@ import java.util.UUID
 
 /**
  * Оркестрирует сборку пакета смены: PacketBuilder → CryptoManager → PacketQueue
- * Согласно секциям 9.2, 9.3, 10 плана
+ *
+ * @param serverPublicKeyPem PEM-ключ сервера для шифрования (из DeviceCredentialsStore)
  */
 class PacketPipeline(
     private val context: Context,
-    private val repository: SamplesRepository
+    private val repository: SamplesRepository,
+    serverPublicKeyPem: String? = null
 ) {
 
     private val packetBuilder = PacketBuilder(context, repository)
-    private val cryptoManager = CryptoManager()
+    private val cryptoManager = CryptoManager(serverPublicKeyPem)
 
     /**
      * Результат успешной сборки пакета
@@ -105,7 +107,8 @@ class PacketPipeline(
             appendLine("  \"payload_enc\": \"${encrypted.payloadEncBase64}\",")
             appendLine("  \"payload_key_enc\": \"${encrypted.payloadKeyEncBase64}\",")
             appendLine("  \"iv\": \"${encrypted.ivBase64}\",")
-            appendLine("  \"payload_hash\": \"${encrypted.payloadHashSha256}\"")
+            appendLine("  \"payload_hash\": \"${encrypted.payloadHashSha256}\",")
+            appendLine("  \"payload_size_bytes\": ${encrypted.payloadSizeBytes}")
             appendLine("}")
         }
         file.writeText(content, Charsets.UTF_8)
