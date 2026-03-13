@@ -1,7 +1,8 @@
 package com.example.activity_tracker.network.model
 
 /**
- * Тело запроса POST /api/v1/watch/packets (секция 9.3 плана)
+ * Тело запроса POST /api/v1/watch/packets
+ * Согласно API_REFERENCE.md секция 3.
  */
 data class UploadRequest(
     val packet_id: String,
@@ -12,15 +13,17 @@ data class UploadRequest(
     val payload_enc: String,
     val payload_key_enc: String,
     val iv: String,
-    val payload_hash: String
+    val payload_hash: String,
+    val payload_size_bytes: Int? = null
 )
 
 /**
- * Ответ сервера 202 Accepted (секция 9.4 плана)
+ * Ответ сервера 202 Accepted
  */
 data class UploadResponse(
     val packet_id: String,
     val status: String,
+    val received_at: String? = null,
     val server_time: String? = null
 )
 
@@ -31,3 +34,4 @@ data class PacketStatusResponse(
     val packet_id: String,
     val status: String
 )
+

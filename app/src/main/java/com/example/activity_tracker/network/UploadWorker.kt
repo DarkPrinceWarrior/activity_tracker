@@ -10,12 +10,13 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.example.activity_tracker.ActivityTrackerApp
+import com.example.activity_tracker.crypto.DeviceCredentialsStore
 import com.example.activity_tracker.packet.PacketPipeline
 
 /**
  * WorkManager Worker для фоновой отправки пакетов из очереди.
  * Запускается при наличии сети. Обрабатывает все pending-пакеты.
- * Согласно секции 10 и 15 плана (WorkManager для гарантированной доставки).
+ * Использует AuthManager для аутентификации на бэкенде.
  */
 class UploadWorker(
     private val context: Context,
@@ -26,7 +27,17 @@ class UploadWorker(
         Log.d(TAG, "UploadWorker started")
 
         val repository = (context.applicationContext as ActivityTrackerApp).samplesRepository
-        val uploader = NetworkUploader(repository)
+        val credentialsStore = DeviceCredentialsStore(context.applicationContext)
+        val authManager = AuthManager(credentialsStore)
+
+        // Проверяем, что устройство зарегистрировано и аутентифицировано
+        val authResult = authManager.ensureAuthenticated()
+        if (authResult.isFailure) {
+            Log.w(TAG, "Device not authenticated: ${authResult.exceptionOrNull()?.message}")
+            return Result.retry()
+        }
+
+        val uploader = NetworkUploader(repository, authManager)
 
         val pendingPackets = repository.getPendingPackets()
         Log.d(TAG, "Found ${pendingPackets.size} pending packets")
@@ -91,3 +102,4 @@ class UploadWorker(
         }
     }
 }
+

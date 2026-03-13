@@ -5,16 +5,20 @@ import com.example.activity_tracker.data.local.entity.PacketQueueEntity
 import com.example.activity_tracker.data.repository.SamplesRepository
 import com.example.activity_tracker.network.model.UploadRequest
 import com.example.activity_tracker.packet.PacketPipeline
-import kotlinx.coroutines.delay
 import org.json.JSONObject
 import java.io.File
 
 /**
- * Отвечает за отправку одного пакета на сервер согласно секции 9.3 и 10 плана.
- * Реализует идемпотентность (Idempotency-Key = packet_id) и экспоненциальный backoff.
+ * Отвечает за отправку одного пакета на реальный сервер.
+ * Реализует:
+ * - Аутентификацию через AuthManager (Bearer token)
+ * - Идемпотентность (Idempotency-Key = packet_id)
+ * - Экспоненциальный backoff при ошибках
+ * - Auto-refresh токена при 401
  */
 class NetworkUploader(
     private val repository: SamplesRepository,
+    private val authManager: AuthManager,
     private val apiService: WatchApiService = NetworkClient.watchApiService
 ) {
 
@@ -47,15 +51,29 @@ class NetworkUploader(
                 ?: return handleError(packet, "Payload file not found: ${packet.payload_path}", false)
 
             val request = buildRequest(packet, payloadJson)
-            val deviceId = extractField(payloadJson, "payload_enc").take(8).ifEmpty { "unknown" }
-            Log.d(TAG, "Sending packet to server (device=$deviceId)")
 
-            // TODO: Заменить mock на реальный вызов после готовности сервера
-            val result = mockUpload(request, packet)
+            // Получаем access token (с auto-refresh если нужно)
+            val accessToken = try {
+                authManager.getAccessToken()
+            } catch (e: AuthManager.AuthException) {
+                return handleError(packet, "Auth error: ${e.message}", shouldRetry = true)
+            }
+
+            val deviceId = authManager.getDeviceIdOrThrow()
+
+            Log.d(TAG, "Sending packet to server: ${packet.packet_id}")
+
+            // Реальный вызов API
+            val result = apiService.uploadPacket(
+                authorization = "Bearer $accessToken",
+                idempotencyKey = packet.packet_id,
+                deviceId = deviceId,
+                request = request
+            )
 
             when {
                 result.isSuccessful || result.code() == 409 -> {
-                    Log.d(TAG, "Packet uploaded successfully: ${packet.packet_id}")
+                    Log.d(TAG, "Packet uploaded successfully: ${packet.packet_id} (code=${result.code()})")
                     repository.updatePacketStatus(
                         packetId = packet.packet_id,
                         status = PacketPipeline.STATUS_UPLOADED,
@@ -64,12 +82,44 @@ class NetworkUploader(
                     )
                     UploadResult.Success
                 }
+                result.code() == 401 -> {
+                    // Токен протух — обновляем и пробуем ещё раз
+                    Log.w(TAG, "Got 401, refreshing token and retrying...")
+                    val refreshResult = authManager.refreshAccessToken()
+                    if (refreshResult.isSuccess) {
+                        // Retry с новым токеном
+                        val newToken = authManager.getAccessToken()
+                        val retryResult = apiService.uploadPacket(
+                            authorization = "Bearer $newToken",
+                            idempotencyKey = packet.packet_id,
+                            deviceId = deviceId,
+                            request = request
+                        )
+                        if (retryResult.isSuccessful || retryResult.code() == 409) {
+                            repository.updatePacketStatus(
+                                packetId = packet.packet_id,
+                                status = PacketPipeline.STATUS_UPLOADED,
+                                attempt = packet.attempt + 1,
+                                error = null
+                            )
+                            UploadResult.Success
+                        } else {
+                            handleError(packet, "Retry failed: ${retryResult.code()}", shouldRetry = true)
+                        }
+                    } else {
+                        handleError(packet, "Token refresh failed", shouldRetry = true)
+                    }
+                }
                 result.code() in listOf(400, 422) -> {
                     val err = "Server validation error: ${result.code()}"
                     handleError(packet, err, shouldRetry = false)
                 }
-                result.code() in listOf(401, 403) -> {
-                    val err = "Auth error: ${result.code()} — manual re-auth required"
+                result.code() == 403 -> {
+                    val err = "Device REVOKED or forbidden: ${result.code()}"
+                    handleError(packet, err, shouldRetry = false)
+                }
+                result.code() == 404 -> {
+                    val err = "Device not found on server: ${result.code()}"
                     handleError(packet, err, shouldRetry = false)
                 }
                 else -> {
@@ -77,42 +127,15 @@ class NetworkUploader(
                     handleError(packet, err, shouldRetry = true)
                 }
             }
+        } catch (e: AuthManager.AuthException) {
+            val err = "Auth error: ${e.message}"
+            Log.e(TAG, err, e)
+            handleError(packet, err, shouldRetry = true)
         } catch (e: Exception) {
             val err = "Network error: ${e.message}"
             Log.e(TAG, err, e)
             handleError(packet, err, shouldRetry = true)
         }
-    }
-
-    /**
-     * Mock-реализация отправки.
-     * TODO: Заменить на реальный вызов apiService.uploadPacket() после готовности сервера:
-     *
-     * return apiService.uploadPacket(
-     *     authorization = "Bearer $accessToken",
-     *     idempotencyKey = packet.packet_id,
-     *     request = request
-     * )
-     */
-    private suspend fun mockUpload(
-        request: UploadRequest,
-        packet: PacketQueueEntity
-    ): retrofit2.Response<com.example.activity_tracker.network.model.UploadResponse> {
-        Log.d(TAG, "MOCK: Would send POST ${NetworkClient.BASE_URL}api/v1/watch/packets")
-        Log.d(TAG, "MOCK: packet_id=${request.packet_id}")
-        Log.d(TAG, "MOCK: shift=[${request.shift_start_ts}, ${request.shift_end_ts}]")
-        Log.d(TAG, "MOCK: payload_hash=${request.payload_hash}")
-        Log.d(TAG, "MOCK: Simulating 202 Accepted")
-
-        // Симулируем небольшую задержку сети
-        delay(500)
-
-        val mockBody = com.example.activity_tracker.network.model.UploadResponse(
-            packet_id = packet.packet_id,
-            status = "accepted",
-            server_time = System.currentTimeMillis().toString()
-        )
-        return retrofit2.Response.success(202, mockBody)
     }
 
     private fun buildRequest(
@@ -121,13 +144,17 @@ class NetworkUploader(
     ): UploadRequest {
         return UploadRequest(
             packet_id = packet.packet_id,
-            device_id = extractField(payloadJson, "device_id").ifEmpty { "unknown" },
+            device_id = extractField(payloadJson, "device_id").ifEmpty {
+                authManager.deviceId ?: "unknown"
+            },
             shift_start_ts = packet.shift_start_ts_ms,
             shift_end_ts = packet.shift_end_ts_ms,
             payload_enc = extractField(payloadJson, "payload_enc"),
             payload_key_enc = extractField(payloadJson, "payload_key_enc"),
             iv = extractField(payloadJson, "iv"),
-            payload_hash = extractField(payloadJson, "payload_hash")
+            payload_hash = extractField(payloadJson, "payload_hash"),
+            payload_size_bytes = extractField(payloadJson, "payload_enc")
+                .toByteArray().size.takeIf { it > 0 }
         )
     }
 
@@ -163,7 +190,7 @@ class NetworkUploader(
         private const val TAG = "NetworkUploader"
 
         /**
-         * Экспоненциальный backoff согласно секции 10 плана: 1, 2, 5, 10, 30, 60 мин
+         * Экспоненциальный backoff: 1, 2, 5, 10, 30, 60 мин
          */
         val BACKOFF_DELAYS_MS = listOf(
             60_000L,      // 1 мин
@@ -178,3 +205,4 @@ class NetworkUploader(
             BACKOFF_DELAYS_MS.getOrElse(attempt) { BACKOFF_DELAYS_MS.last() }
     }
 }
+

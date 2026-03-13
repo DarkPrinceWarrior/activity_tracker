@@ -11,29 +11,40 @@ import retrofit2.http.POST
 import retrofit2.http.Path
 
 /**
- * Retrofit-интерфейс для API сервера согласно секции 9.3 плана
+ * Retrofit-интерфейс для Watch API — отправка пакетов и проверка статусов.
+ * Согласно API_REFERENCE.md секция 3 — "Watch API".
  */
 interface WatchApiService {
 
     /**
-     * POST /api/v1/watch/packets
-     * Отправка зашифрованного пакета смены
-     * Ожидаем: 202 Accepted, 409 Conflict (идемпотентный повтор)
+     * POST /watch/packets
+     * Отправка зашифрованного пакета смены.
+     *
+     * Заголовки:
+     * - Authorization: Bearer <access_token>
+     * - Idempotency-Key: <packet_id> (ОБЯЗАН совпадать с packet_id в теле)
+     * - x-device-id: <device_id> (для доп. валидации)
+     *
+     * Ответы: 202 Accepted, 409 Conflict (дубликат — считаем успехом)
      */
-    @POST("api/v1/watch/packets")
+    @POST("watch/packets")
     suspend fun uploadPacket(
         @Header("Authorization") authorization: String,
         @Header("Idempotency-Key") idempotencyKey: String,
+        @Header("x-device-id") deviceId: String,
         @Body request: UploadRequest
     ): Response<UploadResponse>
 
     /**
-     * GET /api/v1/watch/packets/{packet_id}
+     * GET /watch/packets/{packet_id}
      * Проверка статуса пакета: accepted | processing | processed | error
+     *
+     * Заголовок x-device-id обязателен.
      */
-    @GET("api/v1/watch/packets/{packet_id}")
+    @GET("watch/packets/{packet_id}")
     suspend fun getPacketStatus(
-        @Header("Authorization") authorization: String,
+        @Header("x-device-id") deviceId: String,
         @Path("packet_id") packetId: String
     ): Response<PacketStatusResponse>
 }
+

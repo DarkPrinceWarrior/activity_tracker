@@ -69,11 +69,13 @@ dependencies {
 
     // Network
     implementation(libs.okhttp)
+    implementation(libs.okhttp.logging)
     implementation(libs.retrofit)
     implementation(libs.retrofit.gson)
 
     // Crypto
     implementation(libs.tink.android)
+    implementation(libs.security.crypto)
 
     // Coroutines
     implementation(libs.coroutines.core)
