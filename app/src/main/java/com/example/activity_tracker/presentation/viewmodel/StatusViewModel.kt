@@ -31,7 +31,7 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
     private val authManager = app.authManager
 
     // ─── Код регистрации (для разработки вшит, в проде — от оператора) ───
-    val registrationCode = "B15AF3DD37D6E1D5"
+    val registrationCode = "A5A15D74E0D11F33"
 
     // ─── Auth state ───
     private val _isRegistered = MutableStateFlow(app.credentialsStore.isRegistered)
