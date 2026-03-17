@@ -1,6 +1,8 @@
 package com.example.activity_tracker.presentation.viewmodel
 
 import android.app.Application
+import android.os.Build
+import android.provider.Settings
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -10,6 +12,8 @@ import com.example.activity_tracker.network.HeartbeatWorker
 import com.example.activity_tracker.network.UploadWorker
 import com.example.activity_tracker.packet.PacketPipeline
 import com.example.activity_tracker.service.CollectorService
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -17,10 +21,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 /**
  * ViewModel для управления состоянием UI:
- * - Регистрация устройства
+ * - QR-регистрация: генерация device_id, QR-payload, поллинг
  * - Сбор данных
  * - Статус пакетов
  */
@@ -30,8 +35,21 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
     private val repository = app.samplesRepository
     private val authManager = app.authManager
 
-    // ─── Код регистрации (для разработки вшит, в проде — от оператора) ───
-    val registrationCode = "A5A15D74E0D11F33"
+    // ─── QR Registration ───
+
+    /** JSON-строка для QR-кода (содержит device_id, model, firmware) */
+    private val _qrPayload = MutableStateFlow("")
+    val qrPayload: StateFlow<String> = _qrPayload.asStateFlow()
+
+    /** device_id, сгенерированный для этого устройства */
+    private val _generatedDeviceId = MutableStateFlow("")
+    val generatedDeviceId: StateFlow<String> = _generatedDeviceId.asStateFlow()
+
+    /** Статус поллинга: true = идёт опрос бэкенда */
+    private val _isPolling = MutableStateFlow(false)
+    val isPolling: StateFlow<Boolean> = _isPolling.asStateFlow()
+
+    private var pollingJob: Job? = null
 
     // ─── Auth state ───
     private val _isRegistered = MutableStateFlow(app.credentialsStore.isRegistered)
@@ -65,54 +83,135 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     init {
-        // При запуске: если уже зарегистрированы — проверяем токен
         if (app.credentialsStore.isRegistered) {
+            // Устройство уже зарегистрировано — проверяем токен
             viewModelScope.launch {
                 val result = authManager.ensureAuthenticated()
                 if (result.isFailure) {
                     Log.w(TAG, "Auto-auth failed: ${result.exceptionOrNull()?.message}")
                 }
             }
+        } else {
+            // Не зарегистрировано — генерируем QR-данные и начинаем поллинг
+            generateQrPayload()
+            startPolling()
         }
     }
 
-    // ─── Регистрация ───
+    // ─── QR Payload Generation ───
 
-    fun registerDevice() {
-        viewModelScope.launch {
-            _isAuthLoading.value = true
-            _authError.value = null
+    /**
+     * Генерирует уникальный device_id из Android ID + формирует JSON для QR-кода.
+     *
+     * Формат QR:
+     * ```json
+     * {
+     *   "device_id": "WT-ABCD1234",
+     *   "model": "Galaxy Watch6",
+     *   "firmware": "Wear OS 5",
+     *   "app_version": "1.0.0"
+     * }
+     * ```
+     */
+    private fun generateQrPayload() {
+        val context = getApplication<Application>()
 
-            Log.d(TAG, "Registering device with code: ${registrationCode.take(4)}...")
+        // Генерируем device_id из Android ID (стабильный для устройства)
+        @Suppress("HardwareIds")
+        val androidId = Settings.Secure.getString(
+            context.contentResolver,
+            Settings.Secure.ANDROID_ID
+        ) ?: "UNKNOWN"
 
-            // Шаг 1: Регистрация
-            val registerResult = authManager.register(registrationCode)
+        // Формируем device_id: WT-<первые 8 символов ANDROID_ID в верхнем регистре>
+        val deviceId = "WT-${androidId.take(8).uppercase()}"
 
-            if (registerResult.isFailure) {
-                _authError.value = registerResult.exceptionOrNull()?.message ?: "Ошибка регистрации"
-                _isAuthLoading.value = false
-                return@launch
-            }
+        val model = Build.MODEL ?: "Unknown Watch"
+        val firmware = "Wear OS ${Build.VERSION.SDK_INT}"
 
-            val deviceId = registerResult.getOrNull()
-            Log.d(TAG, "Device registered: $deviceId")
+        val payload = JSONObject().apply {
+            put("device_id", deviceId)
+            put("model", model)
+            put("firmware", firmware)
+            put("app_version", "1.0.0")
+        }.toString()
 
-            // Шаг 2: Получение токенов
-            val authResult = authManager.authenticate()
+        _generatedDeviceId.value = deviceId
+        _qrPayload.value = payload
 
-            if (authResult.isFailure) {
-                _authError.value = authResult.exceptionOrNull()?.message ?: "Ошибка аутентификации"
-                _isAuthLoading.value = false
-                return@launch
-            }
+        Log.d(TAG, "QR payload generated: $payload")
+    }
 
-            Log.d(TAG, "Device authenticated successfully")
-            _isRegistered.value = true
-            _isAuthLoading.value = false
+    // ─── Registration Polling ───
 
-            // Запускаем heartbeat
-            HeartbeatWorker.schedule(getApplication())
+    /**
+     * Запускает поллинг бэкенда каждые 3 секунды.
+     * Когда мобилка зарегистрирует устройство — сохраняет credentials
+     * и переключает UI на StatusScreen.
+     */
+    fun startPolling() {
+        if (pollingJob?.isActive == true) return
+        if (_isRegistered.value) return
+
+        val deviceId = _generatedDeviceId.value
+        if (deviceId.isBlank()) {
+            Log.w(TAG, "Cannot start polling: deviceId is empty")
+            return
         }
+
+        _isPolling.value = true
+        _authError.value = null
+
+        pollingJob = viewModelScope.launch {
+            Log.d(TAG, "Starting registration polling for: $deviceId")
+
+            while (true) {
+                val result = authManager.pollRegistrationStatus(deviceId)
+
+                result.onSuccess { registered ->
+                    if (registered) {
+                        Log.d(TAG, "Device registered! Proceeding to authenticate...")
+                        _isPolling.value = false
+
+                        // Получаем токены
+                        _isAuthLoading.value = true
+                        val authResult = authManager.authenticate()
+
+                        if (authResult.isSuccess) {
+                            Log.d(TAG, "Device authenticated successfully")
+                            _isRegistered.value = true
+                            HeartbeatWorker.schedule(getApplication())
+                        } else {
+                            _authError.value = authResult.exceptionOrNull()?.message
+                                ?: "Ошибка аутентификации"
+                            Log.e(TAG, "Auth failed after registration: ${_authError.value}")
+                        }
+                        _isAuthLoading.value = false
+                        return@launch
+                    }
+                }
+
+                result.onFailure { error ->
+                    // Логируем, но продолжаем поллить — может быть временная ошибка сети
+                    Log.w(TAG, "Poll error (will retry): ${error.message}")
+                }
+
+                delay(POLLING_INTERVAL_MS)
+            }
+        }
+    }
+
+    /** Останавливает поллинг */
+    fun stopPolling() {
+        pollingJob?.cancel()
+        pollingJob = null
+        _isPolling.value = false
+        Log.d(TAG, "Polling stopped")
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        stopPolling()
     }
 
     // ─── Сбор данных ───
@@ -146,6 +245,6 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
 
     companion object {
         private const val TAG = "StatusViewModel"
+        private const val POLLING_INTERVAL_MS = 3000L
     }
 }
-

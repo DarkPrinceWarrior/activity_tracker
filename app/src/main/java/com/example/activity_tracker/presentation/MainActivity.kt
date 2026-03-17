@@ -69,16 +69,8 @@ fun ActivityTrackerApp(viewModel: StatusViewModel) {
     val isRegistered by viewModel.isRegistered.collectAsState()
 
     if (!isRegistered) {
-        // Экран регистрации устройства
-        val isLoading by viewModel.isAuthLoading.collectAsState()
-        val error by viewModel.authError.collectAsState()
-
-        RegistrationScreen(
-            registrationCode = viewModel.registrationCode,
-            isLoading = isLoading,
-            errorMessage = error,
-            onRegisterClick = { viewModel.registerDevice() }
-        )
+        // Экран QR-регистрации: показывает QR с device_id, поллит бэкенд
+        RegistrationScreen(viewModel = viewModel)
     } else {
         // Основной экран статуса
         val isCollecting by viewModel.isCollecting.collectAsState()

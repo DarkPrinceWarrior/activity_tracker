@@ -60,3 +60,12 @@ data class HeartbeatResponse(
     val time_offset_ms: Long,
     val commands: List<String> = emptyList()
 )
+
+// ─── Polling регистрации (QR-flow) ───
+
+data class RegistrationStatusResponse(
+    val registered: Boolean,
+    val device_secret: String? = null,
+    val server_public_key_pem: String? = null,
+    val server_time: String? = null
+)

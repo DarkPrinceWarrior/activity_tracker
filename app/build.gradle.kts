@@ -77,6 +77,9 @@ dependencies {
     implementation(libs.tink.android)
     implementation(libs.security.crypto)
 
+    // QR Code generation
+    implementation(libs.zxing.core)
+
     // Coroutines
     implementation(libs.coroutines.core)
     implementation(libs.coroutines.android)

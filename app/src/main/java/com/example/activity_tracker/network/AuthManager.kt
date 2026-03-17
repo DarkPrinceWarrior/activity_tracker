@@ -12,16 +12,18 @@ import kotlinx.coroutines.sync.withLock
 
 /**
  * Оркестрирует аутентификацию устройства (часов):
- * - Регистрация по одноразовому коду (первый запуск)
+ * - QR-flow: показывает QR → поллит статус → получает credentials
+ * - Legacy-flow: регистрация по одноразовому коду
  * - Получение access/refresh токенов
  * - Автоматическое обновление при истечении
  * - Heartbeat
  *
- * Жизненный цикл:
- * 1. register(code) → device_id + device_secret
- * 2. authenticate()  → access_token + refresh_token
- * 3. getAccessToken() → возвращает валидный токен (с auto-refresh)
- * 4. sendHeartbeat() → периодический сигнал
+ * QR-flow жизненный цикл:
+ * 1. generateDeviceId() → device_id для QR
+ * 2. pollRegistrationStatus(device_id) → device_secret (от мобилки через бэкенд)
+ * 3. authenticate() → access_token + refresh_token
+ * 4. getAccessToken() → валидный токен (с auto-refresh)
+ * 5. sendHeartbeat() → периодический сигнал
  */
 class AuthManager(
     private val credentialsStore: DeviceCredentialsStore,
@@ -51,10 +53,67 @@ class AuthManager(
     val deviceId: String?
         get() = credentialsStore.deviceId
 
-    // ─── Регистрация ───
+    // ─── QR-flow: Поллинг регистрации ───
 
     /**
-     * Регистрирует устройство на бэкенде по одноразовому коду.
+     * Поллит бэкенд для проверки, зарегистрировано ли устройство мобилкой.
+     * Вызывается периодически, пока мобилка не завершит регистрацию.
+     *
+     * @param deviceId ID устройства (из QR-кода)
+     * @return Result.success(true) если зарегистрировано и credentials сохранены,
+     *         Result.success(false) если ещё не зарегистрировано,
+     *         Result.failure() при ошибке сети
+     */
+    suspend fun pollRegistrationStatus(deviceId: String): Result<Boolean> {
+        return try {
+            val response = authService.getRegistrationStatus(deviceId)
+
+            when {
+                response.isSuccessful -> {
+                    val body = response.body()!!
+                    if (body.registered && body.device_secret != null) {
+                        // Мобилка зарегистрировала → сохраняем credentials
+                        credentialsStore.saveRegistration(
+                            deviceId = deviceId,
+                            deviceSecret = body.device_secret,
+                            serverPublicKeyPem = body.server_public_key_pem ?: ""
+                        )
+                        Log.d(TAG, "Device registered via mobile: $deviceId")
+                        Result.success(true)
+                    } else if (body.registered) {
+                        // Зарегистрировано, но secret уже выдан ранее
+                        // Проверяем — может, у нас уже есть credentials
+                        if (credentialsStore.isRegistered) {
+                            Result.success(true)
+                        } else {
+                            Log.w(TAG, "Device registered but secret already claimed")
+                            Result.failure(AuthException("Секрет устройства уже был получен", 0))
+                        }
+                    } else {
+                        // Ещё не зарегистрировано — продолжаем поллить
+                        Result.success(false)
+                    }
+                }
+                response.code() == 404 -> {
+                    // Устройство не найдено — ещё не зарегистрировано
+                    Result.success(false)
+                }
+                else -> {
+                    Result.failure(
+                        AuthException("Ошибка поллинга: ${response.code()}", response.code())
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Poll registration status failed", e)
+            Result.failure(e)
+        }
+    }
+
+    // ─── Legacy: Регистрация по коду ───
+
+    /**
+     * Регистрирует устройство на бэкенде по одноразовому коду (legacy-flow).
      * Вызывается один раз при первом запуске.
      *
      * @param registrationCode код от администратора
@@ -322,7 +381,7 @@ class AuthManager(
     suspend fun ensureAuthenticated(): Result<Unit> {
         return when (currentState) {
             AuthState.NOT_REGISTERED -> {
-                Result.failure(AuthException("Устройство не зарегистрировано. Нужен registration_code.", 0))
+                Result.failure(AuthException("Устройство не зарегистрировано. Покажите QR-код оператору.", 0))
             }
             AuthState.REGISTERED -> {
                 authenticate()
