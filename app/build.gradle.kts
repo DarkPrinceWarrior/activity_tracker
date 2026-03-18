@@ -17,9 +17,19 @@ android {
         versionName = "1.0"
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = file("activity_tracker.jks")
+            storePassword = "android123"
+            keyAlias = "activity_tracker"
+            keyPassword = "android123"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -38,6 +48,12 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    lint {
+        // False positive: ComponentActivity корректно работает с Activity Result API
+        // без Fragment dependency. Актуально для Wear OS приложений.
+        disable += "InvalidFragmentVersionForActivityResult"
     }
 }
 

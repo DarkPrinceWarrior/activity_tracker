@@ -66,6 +66,11 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
     private val _authError = MutableStateFlow<String?>(null)
     val authError: StateFlow<String?> = _authError.asStateFlow()
 
+    // ─── Ready state (для splash screen) ───
+    // Становится true после завершения init{} — MainActivity убирает splash
+    private val _isReady = MutableStateFlow(false)
+    val isReady: StateFlow<Boolean> = _isReady.asStateFlow()
+
     // ─── Collection state ───
     private val _isCollecting = MutableStateFlow(false)
     val isCollecting: StateFlow<Boolean> = _isCollecting.asStateFlow()
@@ -88,18 +93,22 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     init {
-        if (app.credentialsStore.isRegistered) {
-            // Устройство уже зарегистрировано — проверяем токен
-            viewModelScope.launch {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            if (app.credentialsStore.isRegistered) {
+                // Устройство уже зарегистрировано — проверяем токен в фоне
                 val result = authManager.ensureAuthenticated()
                 if (result.isFailure) {
                     Log.w(TAG, "Auto-auth failed: ${result.exceptionOrNull()?.message}")
                 }
+            } else {
+                // Не зарегистрировано — генерируем QR-данные и начинаем поллинг
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    generateQrPayload()
+                    startPolling()
+                }
             }
-        } else {
-            // Не зарегистрировано — генерируем QR-данные и начинаем поллинг
-            generateQrPayload()
-            startPolling()
+            // Инициализация завершена — разрешаем скрыть splash
+            _isReady.value = true
         }
     }
 

@@ -1,22 +1,31 @@
 package com.example.activity_tracker.presentation.ui
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material.*
-import androidx.wear.compose.material.dialog.Dialog
 import androidx.wear.compose.material.dialog.Alert
+import androidx.wear.compose.material.dialog.Dialog
+import androidx.compose.foundation.background
 
 /**
- * UI статуса сбора данных и очереди пакетов.
- * Показывает device_id, статус сбора, очередь пакетов.
- * Внизу — кнопка «Сбросить» для капитального сброса (переезд площадки).
+ * StatusScreen — строгий нативный Wear OS дизайн.
+ * Следует принципам Material 3 для часов:
+ * глансируемость, вертикальный скролл, нативные компоненты.
  */
 @Composable
 fun StatusScreen(
@@ -30,7 +39,6 @@ fun StatusScreen(
     onResetClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // Диалог подтверждения сброса
     var showResetDialog by remember { mutableStateOf(false) }
 
     if (showResetDialog) {
@@ -43,108 +51,98 @@ fun StatusScreen(
         )
     }
 
+    val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
+
     Scaffold(
-        timeText = { TimeText() },
+        positionIndicator = { PositionIndicator(scalingLazyListState = listState) },
+        timeText = {
+            TimeText(
+                timeTextStyle = TimeTextDefaults.timeTextStyle(
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colors.onBackground.copy(alpha = 0.7f)
+                )
+            )
+        },
         modifier = modifier
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+        ScalingLazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            contentPadding = PaddingValues(
+                top = 32.dp,
+                bottom = 24.dp,
+                start = 8.dp,
+                end = 8.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            // Device ID
+
+            // ─── 1. Device ID (строка-метка) ─────────────────────────────
             if (deviceId.isNotBlank()) {
-                Text(
-                    text = deviceId,
-                    style = MaterialTheme.typography.caption2.copy(
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 11.sp
-                    ),
-                    color = Color(0xFF80CBC4),
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.height(4.dp))
+                item {
+                    Text(
+                        text = deviceId,
+                        style = MaterialTheme.typography.caption2,
+                        color = MaterialTheme.colors.primaryVariant,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth(0.9f)
+                    )
+                }
             }
 
-            // Статус сбора
-            Text(
-                text = if (isCollecting) "● Сбор активен" else "Сбор остановлен",
-                style = MaterialTheme.typography.title3,
-                textAlign = TextAlign.Center,
-                color = if (isCollecting)
-                    MaterialTheme.colors.primary
-                else
-                    MaterialTheme.colors.onSurface
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Кнопка управления
-            Button(
-                onClick = if (isCollecting) onStopClick else onStartClick,
-                modifier = Modifier.fillMaxWidth(0.8f)
-            ) {
-                Text(
-                    text = if (isCollecting) "Остановить" else "Запустить",
-                    textAlign = TextAlign.Center
-                )
+            // ─── 2. Статус (dominant text — главный акцент экрана) ────────
+            item {
+                StatusLabel(isCollecting = isCollecting)
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Статус очереди пакетов
-            if (pendingPackets > 0) {
-                Text(
-                    text = "В очереди: $pendingPackets пак.",
-                    style = MaterialTheme.typography.caption1,
-                    color = MaterialTheme.colors.secondary,
-                    textAlign = TextAlign.Center
-                )
-            }
-
-            if (uploadedPackets > 0) {
-                Text(
-                    text = "Отправлено: $uploadedPackets пак.",
-                    style = MaterialTheme.typography.caption1,
-                    color = MaterialTheme.colors.primary,
-                    textAlign = TextAlign.Center
-                )
-            }
-
-            if (errorPackets > 0) {
-                Text(
-                    text = "Ошибка: $errorPackets пак.",
-                    style = MaterialTheme.typography.caption1,
-                    color = MaterialTheme.colors.error,
-                    textAlign = TextAlign.Center
-                )
-            }
-
-            if (isCollecting) {
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "8 потоков сбора",
-                    style = MaterialTheme.typography.caption2,
-                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
-                    textAlign = TextAlign.Center
-                )
-            }
-
-            // Кнопка сброса (только когда сбор НЕ активен)
-            if (!isCollecting) {
-                Spacer(modifier = Modifier.height(12.dp))
-                CompactButton(
-                    onClick = { showResetDialog = true },
+            // ─── 3. Основная кнопка действия ─────────────────────────────
+            item {
+                Button(
+                    onClick = if (isCollecting) onStopClick else onStartClick,
+                    modifier = Modifier
+                        .fillMaxWidth(0.8f)
+                        .height(48.dp),
                     colors = ButtonDefaults.buttonColors(
-                        backgroundColor = Color(0xFF424242)
+                        backgroundColor = if (isCollecting)
+                            MaterialTheme.colors.error
+                        else
+                            MaterialTheme.colors.primary
                     )
                 ) {
                     Text(
-                        text = "⚙ Сбросить",
-                        style = MaterialTheme.typography.caption2.copy(fontSize = 10.sp),
-                        color = Color(0xFFB0BEC5)
+                        text = if (isCollecting) "Стоп" else "Пуск",
+                        style = MaterialTheme.typography.button,
+                        color = MaterialTheme.colors.onPrimary
+                    )
+                }
+            }
+
+            // ─── 4. Статистика пакетов (только если есть данные) ─────────
+            if (uploadedPackets > 0 || pendingPackets > 0 || errorPackets > 0) {
+                item {
+                    PacketStats(
+                        uploaded = uploadedPackets,
+                        pending = pendingPackets,
+                        errors = errorPackets
+                    )
+                }
+            }
+
+            // ─── 5. Кнопка сброса (только в режиме ожидания) ─────────────
+            if (!isCollecting) {
+                item {
+                    CompactChip(
+                        onClick = { showResetDialog = true },
+                        label = {
+                            Text(
+                                text = "Сбросить",
+                                style = MaterialTheme.typography.caption2
+                            )
+                        },
+                        colors = ChipDefaults.secondaryChipColors()
                     )
                 }
             }
@@ -152,10 +150,147 @@ fun StatusScreen(
     }
 }
 
-/**
- * Диалог подтверждения сброса устройства.
- * Предупреждает что часы будут отвязаны от площадки.
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// Статус-лейбл с пульсирующим индикатором
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun StatusLabel(isCollecting: Boolean) {
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = if (isCollecting) 1.6f else 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulseScale"
+    )
+    val dotColor by animateColorAsState(
+        targetValue = if (isCollecting)
+            Color(0xFF4CAF50)
+        else
+            MaterialTheme.colors.onSurface.copy(alpha = 0.38f),
+        animationSpec = tween(400),
+        label = "dotColor"
+    )
+    val labelColor by animateColorAsState(
+        targetValue = if (isCollecting)
+            MaterialTheme.colors.onBackground
+        else
+            MaterialTheme.colors.onBackground.copy(alpha = 0.6f),
+        animationSpec = tween(400),
+        label = "labelColor"
+    )
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        // Пульсирующая точка
+        Box(contentAlignment = Alignment.Center) {
+            if (isCollecting) {
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .scale(pulseScale)
+                        .clip(CircleShape)
+                        .background(Color(0xFF4CAF50).copy(alpha = 0.25f))
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(dotColor)
+            )
+        }
+
+        // Текст статуса
+        Text(
+            text = if (isCollecting) "Сбор активен" else "Сбор остановлен",
+            style = MaterialTheme.typography.title3.copy(
+                fontWeight = FontWeight.SemiBold
+            ),
+            color = labelColor,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Статистика пакетов — строгие нативные Chip-метки
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun PacketStats(
+    uploaded: Int,
+    pending: Int,
+    errors: Int
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier.fillMaxWidth(0.9f)
+    ) {
+        if (uploaded > 0) {
+            StatChip(
+                label = "Отправлено",
+                value = "$uploaded пак.",
+                valueColor = MaterialTheme.colors.primary
+            )
+        }
+        if (pending > 0) {
+            StatChip(
+                label = "В очереди",
+                value = "$pending пак.",
+                valueColor = MaterialTheme.colors.secondary
+            )
+        }
+        if (errors > 0) {
+            StatChip(
+                label = "Ошибки",
+                value = "$errors пак.",
+                valueColor = MaterialTheme.colors.error
+            )
+        }
+    }
+}
+
+@Composable
+private fun StatChip(label: String, value: String, valueColor: Color) {
+    Chip(
+        onClick = {},
+        modifier = Modifier.fillMaxWidth(),
+        enabled = false,
+        colors = ChipDefaults.chipColors(
+            disabledBackgroundColor = MaterialTheme.colors.surface,
+            disabledContentColor = MaterialTheme.colors.onSurface
+        ),
+        label = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.caption1,
+                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f)
+                )
+                Text(
+                    text = value,
+                    style = MaterialTheme.typography.caption1.copy(
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = valueColor
+                )
+            }
+        }
+    )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Диалог подтверждения сброса
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun ResetConfirmationDialog(
     onConfirm: () -> Unit,
@@ -168,18 +303,11 @@ private fun ResetConfirmationDialog(
         Alert(
             title = {
                 Text(
-                    text = "Сбросить устройство?",
+                    text = "Сбросить?",
                     style = MaterialTheme.typography.title3,
+                    fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colors.onBackground
-                )
-            },
-            message = {
-                Text(
-                    text = "Все данные регистрации будут удалены. Потребуется повторное сканирование QR-кода.",
-                    style = MaterialTheme.typography.body2,
-                    textAlign = TextAlign.Center,
-                    color = MaterialTheme.colors.onBackground.copy(alpha = 0.7f)
                 )
             },
             negativeButton = {
@@ -187,19 +315,26 @@ private fun ResetConfirmationDialog(
                     onClick = onDismiss,
                     colors = ButtonDefaults.secondaryButtonColors()
                 ) {
-                    Text("Отмена", style = MaterialTheme.typography.caption2)
+                    Text("✕", style = MaterialTheme.typography.caption2)
                 }
             },
             positiveButton = {
                 CompactButton(
                     onClick = onConfirm,
                     colors = ButtonDefaults.buttonColors(
-                        backgroundColor = Color(0xFFEF5350)
+                        backgroundColor = MaterialTheme.colors.error
                     )
                 ) {
-                    Text("Сброс", style = MaterialTheme.typography.caption2)
+                    Text("✓", style = MaterialTheme.typography.caption2)
                 }
             }
-        )
+        ) {
+            Text(
+                text = "Данные регистрации будут удалены. Потребуется QR-сканирование.",
+                style = MaterialTheme.typography.body2,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colors.onBackground.copy(alpha = 0.7f)
+            )
+        }
     }
 }

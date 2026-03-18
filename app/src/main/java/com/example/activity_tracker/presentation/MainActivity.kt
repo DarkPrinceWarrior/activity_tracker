@@ -40,10 +40,16 @@ class MainActivity : ComponentActivity() {
     ) { /* permissions granted or denied - app continues anyway */ }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        installSplashScreen()
+        val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
 
         setTheme(android.R.style.Theme_DeviceDefault)
+
+        // Удерживаем splash пока ViewModel не завершит инициализацию.
+        // Пользователь видит системный splash вместо белого/чёрного фриза.
+        splashScreen.setKeepOnScreenCondition {
+            !viewModel.isReady.value
+        }
 
         requestPermissionsIfNeeded()
 

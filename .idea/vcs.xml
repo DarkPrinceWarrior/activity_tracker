@@ -3,6 +3,10 @@
   <component name="VcsDirectoryMappings">
     <mapping directory="$PROJECT_DIR$" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/mobile_tracker" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/mobile_tracker/activity_tracker" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/mobile_tracker/activity_tracker/mobile_tracker" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/mobile_tracker/activity_tracker/mobile_tracker/watch-backend" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/mobile_tracker/activity_tracker/watch-backend" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/mobile_tracker/watch-backend" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/watch-backend" vcs="Git" />
   </component>
