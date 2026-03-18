@@ -55,16 +55,25 @@ class HeartbeatWorker(
         val batteryLevel = getBatteryLevel()
         val isCollecting = isServiceRunning()
         val pendingPackets = getPendingPacketCount()
+        val appVersion = getAppVersion()
 
         val result = authManager.sendHeartbeat(
             batteryLevel = batteryLevel,
             isCollecting = isCollecting,
-            pendingPackets = pendingPackets
+            pendingPackets = pendingPackets,
+            appVersion = appVersion
         )
 
         return if (result.isSuccess) {
             val response = result.getOrNull()
             Log.d(TAG, "Heartbeat OK, time_offset=${response?.time_offset_ms}ms, commands=${response?.commands}")
+
+            // Сохраняем time_offset_ms для коррекции timestamps в пакетах
+            response?.time_offset_ms?.let { offset ->
+                context.getSharedPreferences(TIME_SYNC_PREFS, Context.MODE_PRIVATE)
+                    .edit().putLong(KEY_TIME_OFFSET_MS, offset).apply()
+                Log.d(TAG, "Saved time_offset_ms=$offset")
+            }
 
             // TODO: Обработать commands от сервера (wipe, update, etc.)
             response?.commands?.forEach { cmd ->
@@ -107,9 +116,25 @@ class HeartbeatWorker(
         }
     }
 
+    private fun getAppVersion(): String = try {
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.0.0"
+    } catch (_: Exception) {
+        "1.0.0"
+    }
+
     companion object {
         private const val TAG = "HeartbeatWorker"
         private const val WORK_NAME = "heartbeat"
+        const val TIME_SYNC_PREFS = "time_sync"
+        const val KEY_TIME_OFFSET_MS = "time_offset_ms"
+
+        /**
+         * Возвращает сохранённый time_offset_ms из последнего heartbeat.
+         */
+        fun getTimeOffsetMs(context: Context): Long {
+            return context.getSharedPreferences(TIME_SYNC_PREFS, Context.MODE_PRIVATE)
+                .getLong(KEY_TIME_OFFSET_MS, 0L)
+        }
 
         /**
          * Запускает периодическую отправку heartbeat.

@@ -18,9 +18,9 @@ data class ShiftPacket(
 data class DeviceInfo(
     val device_id: String,
     val model: String,
-    val fw: String,
+    val firmware: String,
     val app_version: String,
-    val tz: String
+    val timezone: String
 )
 
 data class ShiftPeriod(
@@ -38,10 +38,10 @@ data class ShiftSamples(
     val gyro: List<GyroSample>,
     val baro: List<BaroSample>,
     val mag: List<MagSample>,
-    val hr: List<HrSample>,
-    val ble: List<BleSample>,
-    val wear: List<WearSample>,
-    val battery: List<BatterySample>,
+    val heart_rate: List<HrSample>,
+    val ble_events: List<BleSample>,
+    val wear_events: List<WearSample>,
+    val battery_events: List<BatterySample>,
     val downtime_reasons: List<DowntimeSample>
 )
 

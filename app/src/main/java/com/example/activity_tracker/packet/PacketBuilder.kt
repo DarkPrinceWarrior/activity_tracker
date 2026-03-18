@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Build
 import android.util.Log
 import com.example.activity_tracker.data.repository.SamplesRepository
+import com.example.activity_tracker.network.HeartbeatWorker
 import com.example.activity_tracker.packet.model.AccelSample
 import com.example.activity_tracker.packet.model.BatterySample
 import com.example.activity_tracker.packet.model.BleSample
@@ -30,6 +31,7 @@ import java.util.UUID
 class PacketBuilder(
     private val context: Context,
     private val repository: SamplesRepository,
+    private val deviceId: String,
     private val gson: Gson = Gson()
 ) {
 
@@ -84,16 +86,19 @@ class PacketBuilder(
             packet_id = UUID.randomUUID().toString(),
             device = buildDeviceInfo(),
             shift = ShiftPeriod(startTs, endTs),
-            time_sync = TimeSync(),
+            time_sync = TimeSync(
+                server_time_offset_ms = HeartbeatWorker.getTimeOffsetMs(context),
+                server_time_ms = System.currentTimeMillis()
+            ),
             samples = ShiftSamples(
                 accel = accelList,
                 gyro = gyroList,
                 baro = baroList,
                 mag = magList,
-                hr = hrList,
-                ble = bleList,
-                wear = wearList,
-                battery = batteryList,
+                heart_rate = hrList,
+                ble_events = bleList,
+                wear_events = wearList,
+                battery_events = batteryList,
                 downtime_reasons = downtimeList
             ),
             meta = PacketMeta(
@@ -121,11 +126,11 @@ class PacketBuilder(
     fun sizeBytes(packet: ShiftPacket): Int = toJson(packet).toByteArray().size
 
     private fun buildDeviceInfo(): DeviceInfo = DeviceInfo(
-        device_id = getDeviceId(),
+        device_id = deviceId,
         model = "${Build.MANUFACTURER} ${Build.MODEL}",
-        fw = Build.VERSION.RELEASE,
+        firmware = Build.VERSION.RELEASE,
         app_version = getAppVersion(),
-        tz = TimeZone.getDefault().id
+        timezone = TimeZone.getDefault().id
     )
 
     private fun getAppVersion(): String = try {
@@ -135,19 +140,7 @@ class PacketBuilder(
         "1.0"
     }
 
-    private fun getDeviceId(): String {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.getString(KEY_DEVICE_ID, null) ?: run {
-            val newId = UUID.randomUUID().toString()
-            prefs.edit().putString(KEY_DEVICE_ID, newId).apply()
-            Log.d(TAG, "Generated new device_id: $newId")
-            newId
-        }
-    }
-
     companion object {
         private const val TAG = "PacketBuilder"
-        private const val PREFS_NAME = "activity_tracker_prefs"
-        private const val KEY_DEVICE_ID = "device_id"
     }
 }

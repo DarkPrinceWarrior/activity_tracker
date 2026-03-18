@@ -37,14 +37,29 @@ interface WatchApiService {
 
     /**
      * GET /watch/packets/{packet_id}
-     * Проверка статуса пакета: accepted | processing | processed | error
+     * Проверка статуса пакета: accepted | decrypting | parsing | processing | processed | error
      *
-     * Заголовок x-device-id обязателен.
+     * Заголовки:
+     * - Authorization: Bearer <device_access_token>
+     * - x-device-id: обязателен
      */
     @GET("watch/packets/{packet_id}")
     suspend fun getPacketStatus(
+        @Header("Authorization") authorization: String,
         @Header("x-device-id") deviceId: String,
         @Path("packet_id") packetId: String
     ): Response<PacketStatusResponse>
+
+    /**
+     * GET /watch/packets/{packet_id}/echo
+     * Отладочный endpoint — возвращает расшифрованные данные пакета.
+     * Полезно для проверки что бэкенд корректно расшифровал и распарсил payload.
+     */
+    @GET("watch/packets/{packet_id}/echo")
+    suspend fun getPacketEcho(
+        @Header("Authorization") authorization: String,
+        @Header("x-device-id") deviceId: String,
+        @Path("packet_id") packetId: String
+    ): Response<okhttp3.ResponseBody>
 }
 

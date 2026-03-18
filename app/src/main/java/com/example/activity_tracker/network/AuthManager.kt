@@ -309,7 +309,8 @@ class AuthManager(
     suspend fun sendHeartbeat(
         batteryLevel: Float,
         isCollecting: Boolean,
-        pendingPackets: Int
+        pendingPackets: Int,
+        appVersion: String = "1.0.0"
     ): Result<HeartbeatResponse> {
         val deviceId = credentialsStore.deviceId
             ?: return Result.failure(AuthException("Устройство не зарегистрировано", 0))
@@ -323,7 +324,8 @@ class AuthManager(
                 device_time_ms = System.currentTimeMillis(),
                 battery_level = batteryLevel,
                 is_collecting = isCollecting,
-                pending_packets = pendingPackets
+                pending_packets = pendingPackets,
+                app_version = appVersion
             )
 
             val response = authService.heartbeat(

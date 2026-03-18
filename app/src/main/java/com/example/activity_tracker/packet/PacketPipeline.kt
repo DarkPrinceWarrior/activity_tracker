@@ -13,15 +13,17 @@ import java.util.UUID
 /**
  * Оркестрирует сборку пакета смены: PacketBuilder → CryptoManager → PacketQueue
  *
+ * @param deviceId ID устройства из DeviceCredentialsStore (формат WT-XXXXXXXX)
  * @param serverPublicKeyPem PEM-ключ сервера для шифрования (из DeviceCredentialsStore)
  */
 class PacketPipeline(
     private val context: Context,
     private val repository: SamplesRepository,
+    private val deviceId: String,
     serverPublicKeyPem: String? = null
 ) {
 
-    private val packetBuilder = PacketBuilder(context, repository)
+    private val packetBuilder = PacketBuilder(context, repository, deviceId)
     private val cryptoManager = CryptoManager(serverPublicKeyPem)
 
     /**

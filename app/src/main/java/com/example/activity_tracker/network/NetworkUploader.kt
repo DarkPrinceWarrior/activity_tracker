@@ -5,6 +5,7 @@ import com.example.activity_tracker.data.local.entity.PacketQueueEntity
 import com.example.activity_tracker.data.repository.SamplesRepository
 import com.example.activity_tracker.network.model.UploadRequest
 import com.example.activity_tracker.packet.PacketPipeline
+import kotlinx.coroutines.delay
 import org.json.JSONObject
 import java.io.File
 
@@ -73,14 +74,27 @@ class NetworkUploader(
 
             when {
                 result.isSuccessful || result.code() == 409 -> {
-                    Log.d(TAG, "Packet uploaded successfully: ${packet.packet_id} (code=${result.code()})")
-                    repository.updatePacketStatus(
+                    Log.d(TAG, "Packet accepted by server: ${packet.packet_id} (code=${result.code()})")
+
+                    // Polling статуса пакета (асинхронная обработка на бэкенде)
+                    val finalStatus = pollPacketStatus(
                         packetId = packet.packet_id,
-                        status = PacketPipeline.STATUS_UPLOADED,
-                        attempt = packet.attempt + 1,
-                        error = null
+                        deviceId = deviceId,
+                        accessToken = accessToken
                     )
-                    UploadResult.Success
+                    Log.d(TAG, "Packet final status: ${packet.packet_id} → $finalStatus")
+
+                    if (finalStatus == "error") {
+                        handleError(packet, "Server processing error", shouldRetry = true)
+                    } else {
+                        repository.updatePacketStatus(
+                            packetId = packet.packet_id,
+                            status = PacketPipeline.STATUS_UPLOADED,
+                            attempt = packet.attempt + 1,
+                            error = null
+                        )
+                        UploadResult.Success
+                    }
                 }
                 result.code() == 401 -> {
                     // Токен протух — обновляем и пробуем ещё раз
@@ -190,8 +204,46 @@ class NetworkUploader(
         return UploadResult.Failure(error, shouldRetry)
     }
 
+    /**
+     * Polling статуса пакета после 202 Accepted.
+     * Бэкенд обрабатывает пакет асинхронно: accepted → decrypting → parsing → processing → processed|error
+     * Поллим каждые 5 секунд, максимум 12 раз (60 секунд).
+     *
+     * @return финальный статус: "processed", "error" или "timeout"
+     */
+    private suspend fun pollPacketStatus(
+        packetId: String,
+        deviceId: String,
+        accessToken: String
+    ): String {
+        repeat(POLL_MAX_ATTEMPTS) { attempt ->
+            delay(POLL_INTERVAL_MS)
+            try {
+                val response = apiService.getPacketStatus(
+                    authorization = "Bearer $accessToken",
+                    deviceId = deviceId,
+                    packetId = packetId
+                )
+                val status = response.body()?.status
+                Log.d(TAG, "Poll #${attempt + 1}: packet=$packetId, status=$status")
+
+                when (status) {
+                    "processed" -> return "processed"
+                    "error" -> return "error"
+                    // accepted, decrypting, parsing, processing — продолжаем polling
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Poll #${attempt + 1} failed: ${e.message}")
+            }
+        }
+        Log.w(TAG, "Polling timeout for packet $packetId after ${POLL_MAX_ATTEMPTS * POLL_INTERVAL_MS / 1000}s")
+        return "timeout" // Пакет принят, но обработка ещё не завершилась
+    }
+
     companion object {
         private const val TAG = "NetworkUploader"
+        private const val POLL_INTERVAL_MS = 5000L  // 5 секунд между запросами
+        private const val POLL_MAX_ATTEMPTS = 12    // 12 × 5с = 60с максимум
 
         /**
          * Экспоненциальный backoff: 1, 2, 5, 10, 30, 60 мин
@@ -205,8 +257,15 @@ class NetworkUploader(
             3_600_000L    // 60 мин
         )
 
-        fun backoffDelay(attempt: Int): Long =
-            BACKOFF_DELAYS_MS.getOrElse(attempt) { BACKOFF_DELAYS_MS.last() }
+        /**
+         * Exponential backoff с jitter для 429/server errors.
+         * Jitter (0–25% от base) предотвращает thundering herd.
+         */
+        fun backoffDelay(attempt: Int): Long {
+            val base = BACKOFF_DELAYS_MS.getOrElse(attempt) { BACKOFF_DELAYS_MS.last() }
+            val jitter = (0..base / 4).random()
+            return base + jitter
+        }
     }
 }
 

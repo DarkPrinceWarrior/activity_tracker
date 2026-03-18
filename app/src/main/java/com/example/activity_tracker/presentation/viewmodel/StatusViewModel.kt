@@ -55,6 +55,11 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
     private val _isRegistered = MutableStateFlow(app.credentialsStore.isRegistered)
     val isRegistered: StateFlow<Boolean> = _isRegistered.asStateFlow()
 
+    /** device_id для отображения на StatusScreen */
+    val deviceId: StateFlow<String> = MutableStateFlow(
+        app.credentialsStore.deviceId ?: ""
+    )
+
     private val _isAuthLoading = MutableStateFlow(false)
     val isAuthLoading: StateFlow<Boolean> = _isAuthLoading.asStateFlow()
 
@@ -214,6 +219,41 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
         stopPolling()
     }
 
+    // ─── Сброс устройства ───
+
+    /**
+     * Полный сброс часов: очистка credentials, остановка сбора,
+     * отмена heartbeat. Часы возвращаются на экран QR-регистрации.
+     * Используется при переезде часов на другую площадку.
+     */
+    fun resetDevice() {
+        viewModelScope.launch {
+            Log.w(TAG, "Device reset initiated")
+
+            // 1. Останавливаем сбор если работает
+            if (_isCollecting.value) {
+                CollectorService.stop(getApplication())
+                _isCollecting.value = false
+                _shiftStartTs.value = null
+            }
+
+            // 2. Отменяем heartbeat
+            HeartbeatWorker.cancel(getApplication())
+
+            // 3. Очищаем все credentials
+            app.credentialsStore.clear()
+
+            // 4. Возвращаем на QR-экран
+            _isRegistered.value = false
+
+            // 5. Генерируем новый QR и начинаем поллинг
+            generateQrPayload()
+            startPolling()
+
+            Log.d(TAG, "Device reset complete — showing QR screen")
+        }
+    }
+
     // ─── Сбор данных ───
 
     fun startCollection() {
@@ -233,7 +273,8 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
 
             if (startTs != null) {
                 val serverKey = app.credentialsStore.serverPublicKeyPem
-                val pipeline = PacketPipeline(getApplication(), repository, serverKey)
+                val deviceId = app.credentialsStore.deviceId ?: "unknown"
+                val pipeline = PacketPipeline(getApplication(), repository, deviceId, serverKey)
                 val result = pipeline.buildAndEnqueue(startTs, endTs)
                 if (result != null) {
                     Log.d(TAG, "Packet created: ${result.packetId}, size=${result.payloadSizeBytes}B")
