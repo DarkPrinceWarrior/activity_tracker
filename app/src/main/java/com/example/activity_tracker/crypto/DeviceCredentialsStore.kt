@@ -67,12 +67,6 @@ class DeviceCredentialsStore(context: Context) {
         get() = prefs.getString(KEY_SERVER_PUBLIC_KEY, null)
         set(value) = prefs.edit().putString(KEY_SERVER_PUBLIC_KEY, value).apply()
 
-    // ─── Registration Code (temp) ───
-
-    var registrationCode: String?
-        get() = prefs.getString(KEY_REGISTRATION_CODE, null)
-        set(value) = prefs.edit().putString(KEY_REGISTRATION_CODE, value).apply()
-
     // ─── State checks ───
 
     val isRegistered: Boolean
@@ -128,6 +122,5 @@ class DeviceCredentialsStore(context: Context) {
         private const val KEY_REFRESH_TOKEN = "refresh_token"
         private const val KEY_TOKEN_EXPIRES_AT = "token_expires_at"
         private const val KEY_SERVER_PUBLIC_KEY = "server_public_key_pem"
-        private const val KEY_REGISTRATION_CODE = "registration_code"
     }
 }

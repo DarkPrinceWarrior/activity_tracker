@@ -14,11 +14,12 @@ import com.example.activity_tracker.data.local.entity.*
         BaroEntity::class,
         MagEntity::class,
         BatteryEntity::class,
+        StepCountEntity::class,
         DowntimeReasonEntity::class,
         PacketQueueEntity::class,
         PacketPartEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -29,6 +30,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun baroDao(): BaroDao
     abstract fun magDao(): MagDao
     abstract fun batteryDao(): BatteryDao
+    abstract fun stepCountDao(): StepCountDao
     abstract fun downtimeReasonDao(): DowntimeReasonDao
     abstract fun packetQueueDao(): PacketQueueDao
     abstract fun packetPartDao(): PacketPartDao

@@ -24,7 +24,7 @@ import retrofit2.http.Path
  * 2. getRegistrationStatus() — поллинг, ждём пока мобилка зарегистрирует
  * 3. getToken() — получение access + refresh токенов
  * 4. refreshToken() — обновление access-токена при истечении
- * 5. heartbeat() — периодический сигнал жизни (каждые 5 мин)
+ * 5. heartbeat() — служебный сигнал устройства при необходимости
  *
  * Legacy-flow (через registration_code):
  * 1. register() — первый запуск, по одноразовому коду
@@ -74,7 +74,7 @@ interface WatchAuthService {
 
     /**
      * POST /watch/heartbeat
-     * Периодический сигнал жизни от устройства.
+     * Служебный сигнал устройства.
      * Обновляет last_heartbeat_at и синхронизирует время.
      */
     @POST("watch/heartbeat")

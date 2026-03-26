@@ -7,9 +7,6 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.activity_tracker.ActivityTrackerApp
-import com.example.activity_tracker.network.AuthManager
-import com.example.activity_tracker.network.HeartbeatWorker
-import com.example.activity_tracker.network.UploadWorker
 import com.example.activity_tracker.packet.PacketPipeline
 import com.example.activity_tracker.service.CollectorService
 import kotlinx.coroutines.Job
@@ -122,7 +119,7 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
      * {
      *   "device_id": "WT-ABCD1234",
      *   "model": "Galaxy Watch6",
-     *   "firmware": "Wear OS 5",
+     *   "firmware": "Wear OS 34",
      *   "app_version": "1.0.0"
      * }
      * ```
@@ -147,7 +144,7 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
             put("device_id", deviceId)
             put("model", model)
             put("firmware", firmware)
-            put("app_version", "1.0.0")
+            put("app_version", getAppVersion())
         }.toString()
 
         _generatedDeviceId.value = deviceId
@@ -194,7 +191,6 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
                         if (authResult.isSuccess) {
                             Log.d(TAG, "Device authenticated successfully")
                             _isRegistered.value = true
-                            HeartbeatWorker.schedule(getApplication())
                         } else {
                             _authError.value = authResult.exceptionOrNull()?.message
                                 ?: "Ошибка аутентификации"
@@ -231,8 +227,8 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
     // ─── Сброс устройства ───
 
     /**
-     * Полный сброс часов: очистка credentials, остановка сбора,
-     * отмена heartbeat. Часы возвращаются на экран QR-регистрации.
+     * Полный сброс часов: очистка credentials, остановка сбора.
+     * Часы возвращаются на экран QR-регистрации.
      * Используется при переезде часов на другую площадку.
      */
     fun resetDevice() {
@@ -246,16 +242,13 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
                 _shiftStartTs.value = null
             }
 
-            // 2. Отменяем heartbeat
-            HeartbeatWorker.cancel(getApplication())
-
-            // 3. Очищаем все credentials
+            // 2. Очищаем все credentials
             app.credentialsStore.clear()
 
-            // 4. Возвращаем на QR-экран
+            // 3. Возвращаем на QR-экран
             _isRegistered.value = false
 
-            // 5. Генерируем новый QR и начинаем поллинг
+            // 4. Генерируем новый QR и начинаем поллинг
             generateQrPayload()
             startPolling()
 
@@ -267,34 +260,32 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
 
     fun startCollection() {
         viewModelScope.launch {
-            _shiftStartTs.value = System.currentTimeMillis()
-            CollectorService.start(getApplication())
+            val startTs = System.currentTimeMillis()
+            _shiftStartTs.value = startTs
+            CollectorService.start(getApplication(), startTs)
             _isCollecting.value = true
         }
     }
 
     fun stopCollection() {
         viewModelScope.launch {
-            val startTs = _shiftStartTs.value
             val endTs = System.currentTimeMillis()
-            CollectorService.stop(getApplication())
+            CollectorService.stop(getApplication(), endTs)
             _isCollecting.value = false
-
-            if (startTs != null) {
-                val serverKey = app.credentialsStore.serverPublicKeyPem
-                val deviceId = app.credentialsStore.deviceId ?: "unknown"
-                val pipeline = PacketPipeline(getApplication(), repository, deviceId, serverKey)
-                val result = pipeline.buildAndEnqueue(startTs, endTs)
-                if (result != null) {
-                    Log.d(TAG, "Packet created: ${result.packetId}, size=${result.payloadSizeBytes}B")
-                    UploadWorker.schedule(getApplication())
-                }
-            }
+            _shiftStartTs.value = null
         }
     }
 
     companion object {
         private const val TAG = "StatusViewModel"
         private const val POLLING_INTERVAL_MS = 3000L
+    }
+
+    private fun getAppVersion(): String = try {
+        getApplication<Application>().packageManager
+            .getPackageInfo(getApplication<Application>().packageName, 0)
+            .versionName ?: "1.0.0"
+    } catch (_: Exception) {
+        "1.0.0"
     }
 }

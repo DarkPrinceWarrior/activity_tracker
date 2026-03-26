@@ -28,7 +28,7 @@ class UploadWorker(
 
         val repository = (context.applicationContext as ActivityTrackerApp).samplesRepository
         val credentialsStore = DeviceCredentialsStore(context.applicationContext)
-        val authManager = AuthManager(credentialsStore)
+        val authManager = AuthManager(context.applicationContext, credentialsStore)
 
         // Проверяем, что устройство зарегистрировано и аутентифицировано
         val authResult = authManager.ensureAuthenticated()
@@ -102,4 +102,3 @@ class UploadWorker(
         }
     }
 }
-

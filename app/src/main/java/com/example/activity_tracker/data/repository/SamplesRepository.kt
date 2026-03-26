@@ -11,6 +11,7 @@ interface SamplesRepository {
     suspend fun saveBaro(samples: List<BaroEntity>)
     suspend fun saveMag(samples: List<MagEntity>)
     suspend fun saveBattery(events: List<BatteryEntity>)
+    suspend fun saveSteps(samples: List<StepCountEntity>)
     suspend fun saveDowntimeReason(events: List<DowntimeReasonEntity>)
 
     suspend fun enqueuePacket(item: PacketQueueEntity)
@@ -25,5 +26,6 @@ interface SamplesRepository {
     suspend fun getBaroRange(from: Long, to: Long): List<BaroEntity>
     suspend fun getMagRange(from: Long, to: Long): List<MagEntity>
     suspend fun getBatteryRange(from: Long, to: Long): List<BatteryEntity>
+    suspend fun getStepRange(from: Long, to: Long): List<StepCountEntity>
     suspend fun getDowntimeReasonRange(from: Long, to: Long): List<DowntimeReasonEntity>
 }

@@ -9,10 +9,10 @@ package com.example.activity_tracker.network.model
 
 data class DeviceRegisterRequest(
     val registration_code: String,
-    val model: String = "Galaxy Watch 8",
-    val firmware: String = "Wear OS 5",
-    val app_version: String = "1.0.0",
-    val timezone: String = "Europe/Moscow"
+    val model: String,
+    val firmware: String,
+    val app_version: String,
+    val timezone: String
 )
 
 data class DeviceRegisterResponse(
@@ -51,7 +51,7 @@ data class HeartbeatRequest(
     val battery_level: Float,
     val is_collecting: Boolean,
     val pending_packets: Int,
-    val app_version: String = "1.0.0"
+    val app_version: String
 )
 
 data class HeartbeatResponse(

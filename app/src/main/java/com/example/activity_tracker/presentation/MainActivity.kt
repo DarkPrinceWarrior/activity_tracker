@@ -1,14 +1,10 @@
-/* While this template provides a good starting point for using Wear Compose, you can always
- * take a look at https://github.com/android/wear-os-samples/tree/main/ComposeStarter to find the
- * most up to date changes to the libraries and their usages.
- */
-
 package com.example.activity_tracker.presentation
 
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -37,7 +33,14 @@ class MainActivity : ComponentActivity() {
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { /* permissions granted or denied - app continues anyway */ }
+    ) { permissions ->
+        permissions
+            .filterValues { granted -> !granted }
+            .keys
+            .forEach { deniedPermission ->
+                Log.w(TAG, "Permission denied: $deniedPermission")
+            }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
@@ -67,6 +70,10 @@ class MainActivity : ComponentActivity() {
         if (notGranted.isNotEmpty()) {
             permissionLauncher.launch(notGranted.toTypedArray())
         }
+    }
+
+    companion object {
+        private const val TAG = "MainActivity"
     }
 }
 

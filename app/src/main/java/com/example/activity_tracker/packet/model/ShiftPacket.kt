@@ -38,6 +38,7 @@ data class ShiftSamples(
     val gyro: List<GyroSample>,
     val baro: List<BaroSample>,
     val mag: List<MagSample>,
+    val steps: List<StepSample>,
     val heart_rate: List<HrSample>,
     val ble_events: List<BleSample>,
     val wear_events: List<WearSample>,
@@ -71,6 +72,11 @@ data class MagSample(
     val x: Float,
     val y: Float,
     val z: Float
+)
+
+data class StepSample(
+    val ts_ms: Long,
+    val total_steps: Long
 )
 
 data class HrSample(

@@ -1,5 +1,7 @@
 package com.example.activity_tracker.network
 
+import android.content.Context
+import android.os.Build
 import android.util.Log
 import com.example.activity_tracker.crypto.DeviceCredentialsStore
 import com.example.activity_tracker.network.model.DeviceRefreshRequest
@@ -9,6 +11,7 @@ import com.example.activity_tracker.network.model.HeartbeatRequest
 import com.example.activity_tracker.network.model.HeartbeatResponse
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.TimeZone
 
 /**
  * Оркестрирует аутентификацию устройства (часов):
@@ -23,9 +26,10 @@ import kotlinx.coroutines.sync.withLock
  * 2. pollRegistrationStatus(device_id) → device_secret (от мобилки через бэкенд)
  * 3. authenticate() → access_token + refresh_token
  * 4. getAccessToken() → валидный токен (с auto-refresh)
- * 5. sendHeartbeat() → периодический сигнал
+ * 5. sendHeartbeat() → служебный сигнал
  */
 class AuthManager(
+    private val context: Context,
     private val credentialsStore: DeviceCredentialsStore,
     private val authService: WatchAuthService = NetworkClient.watchAuthService
 ) {
@@ -124,7 +128,11 @@ class AuthManager(
 
         return try {
             val request = DeviceRegisterRequest(
-                registration_code = registrationCode
+                registration_code = registrationCode,
+                model = Build.MODEL ?: "Unknown Watch",
+                firmware = Build.VERSION.RELEASE ?: "Unknown",
+                app_version = getAppVersion(),
+                timezone = TimeZone.getDefault().id
             )
 
             val response = authService.register(request)
@@ -409,5 +417,11 @@ class AuthManager(
 
     companion object {
         private const val TAG = "AuthManager"
+    }
+
+    private fun getAppVersion(): String = try {
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.0.0"
+    } catch (_: Exception) {
+        "1.0.0"
     }
 }

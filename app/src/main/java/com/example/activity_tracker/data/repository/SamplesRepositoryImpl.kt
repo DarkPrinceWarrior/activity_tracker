@@ -41,6 +41,10 @@ class SamplesRepositoryImpl(
         db.batteryDao().insert(events)
     }
 
+    override suspend fun saveSteps(samples: List<StepCountEntity>) = withContext(io) {
+        db.stepCountDao().insert(samples)
+    }
+
     override suspend fun saveDowntimeReason(events: List<DowntimeReasonEntity>) = withContext(io) {
         db.downtimeReasonDao().insert(events)
     }
@@ -91,6 +95,10 @@ class SamplesRepositoryImpl(
 
     override suspend fun getBatteryRange(from: Long, to: Long): List<BatteryEntity> = withContext(io) {
         db.batteryDao().range(from, to)
+    }
+
+    override suspend fun getStepRange(from: Long, to: Long): List<StepCountEntity> = withContext(io) {
+        db.stepCountDao().range(from, to)
     }
 
     override suspend fun getDowntimeReasonRange(from: Long, to: Long): List<DowntimeReasonEntity> = withContext(io) {

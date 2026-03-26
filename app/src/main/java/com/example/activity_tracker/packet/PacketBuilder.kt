@@ -4,7 +4,6 @@ import android.content.Context
 import android.os.Build
 import android.util.Log
 import com.example.activity_tracker.data.repository.SamplesRepository
-import com.example.activity_tracker.network.HeartbeatWorker
 import com.example.activity_tracker.packet.model.AccelSample
 import com.example.activity_tracker.packet.model.BatterySample
 import com.example.activity_tracker.packet.model.BleSample
@@ -18,6 +17,7 @@ import com.example.activity_tracker.packet.model.PacketMeta
 import com.example.activity_tracker.packet.model.ShiftPacket
 import com.example.activity_tracker.packet.model.ShiftPeriod
 import com.example.activity_tracker.packet.model.ShiftSamples
+import com.example.activity_tracker.packet.model.StepSample
 import com.example.activity_tracker.packet.model.TimeSync
 import com.example.activity_tracker.packet.model.WearSample
 import com.google.gson.Gson
@@ -56,6 +56,7 @@ class PacketBuilder(
         val baroSamples = repository.getBaroRange(startTs, endTs)
         val magSamples = repository.getMagRange(startTs, endTs)
         val batteryEvents = repository.getBatteryRange(startTs, endTs)
+        val stepCounts = repository.getStepRange(startTs, endTs)
         val downtimeReasons = repository.getDowntimeReasonRange(startTs, endTs)
 
         val accelList = sensorSamples
@@ -72,6 +73,8 @@ class PacketBuilder(
 
         val hrList = heartRates.map { HrSample(it.ts_ms, it.bpm, it.confidence ?: 1f) }
 
+        val stepList = stepCounts.map { StepSample(it.ts_ms, it.total_steps) }
+
         val bleList = bleEvents.map { BleSample(it.ts_ms, it.beacon_id, it.rssi) }
 
         val wearList = wearEvents.map { WearSample(it.ts_ms, it.state) }
@@ -87,7 +90,7 @@ class PacketBuilder(
             device = buildDeviceInfo(),
             shift = ShiftPeriod(startTs, endTs),
             time_sync = TimeSync(
-                server_time_offset_ms = HeartbeatWorker.getTimeOffsetMs(context),
+                server_time_offset_ms = 0L,
                 server_time_ms = System.currentTimeMillis()
             ),
             samples = ShiftSamples(
@@ -95,6 +98,7 @@ class PacketBuilder(
                 gyro = gyroList,
                 baro = baroList,
                 mag = magList,
+                steps = stepList,
                 heart_rate = hrList,
                 ble_events = bleList,
                 wear_events = wearList,
@@ -109,7 +113,7 @@ class PacketBuilder(
 
         Log.d(TAG, "Packet built: id=${packet.packet_id}, " +
             "accel=${accelList.size}, gyro=${gyroList.size}, " +
-            "hr=${hrList.size}, ble=${bleList.size}, " +
+            "steps=${stepList.size}, hr=${hrList.size}, ble=${bleList.size}, " +
             "wear=${wearList.size}, battery=${batteryList.size}")
 
         return packet
