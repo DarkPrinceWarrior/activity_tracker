@@ -7,6 +7,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.activity_tracker.ActivityTrackerApp
+import com.example.activity_tracker.network.BindingPoller
 import com.example.activity_tracker.packet.PacketPipeline
 import com.example.activity_tracker.service.CollectorService
 import kotlinx.coroutines.Job
@@ -23,7 +24,7 @@ import org.json.JSONObject
 /**
  * ViewModel для управления состоянием UI:
  * - QR-регистрация: генерация device_id, QR-payload, поллинг
- * - Сбор данных
+ * - Автоматический сбор данных (через BindingPoller — без кнопок start/stop)
  * - Статус пакетов
  */
 class StatusViewModel(application: Application) : AndroidViewModel(application) {
@@ -74,6 +75,21 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _shiftStartTs = MutableStateFlow<Long?>(null)
 
+    // ─── BindingPoller state ───
+    private var bindingPoller: BindingPoller? = null
+
+    /** Текущее состояние поллера (для отображения в UI) */
+    private val _pollerState = MutableStateFlow(BindingPoller.PollerState.SLEEPING)
+    val pollerState: StateFlow<BindingPoller.PollerState> = _pollerState.asStateFlow()
+
+    /** Текущий активный binding_id */
+    private val _activeBindingId = MutableStateFlow<String?>(null)
+    val activeBindingId: StateFlow<String?> = _activeBindingId.asStateFlow()
+
+    /** Заряжаются ли часы */
+    private val _isCharging = MutableStateFlow(false)
+    val isChargingState: StateFlow<Boolean> = _isCharging.asStateFlow()
+
     val pendingPacketsCount: StateFlow<Int> = repository
         .observeQueue(PacketPipeline.STATUS_PENDING)
         .map { it.size }
@@ -96,6 +112,10 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
                 val result = authManager.ensureAuthenticated()
                 if (result.isFailure) {
                     Log.w(TAG, "Auto-auth failed: ${result.exceptionOrNull()?.message}")
+                }
+                // Запускаем BindingPoller
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    startBindingPoller()
                 }
             } else {
                 // Не зарегистрировано — генерируем QR-данные и начинаем поллинг
@@ -158,7 +178,7 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * Запускает поллинг бэкенда каждые 3 секунды.
      * Когда мобилка зарегистрирует устройство — сохраняет credentials
-     * и переключает UI на StatusScreen.
+     * и переключает UI на StatusScreen + запускает BindingPoller.
      */
     fun startPolling() {
         if (pollingJob?.isActive == true) return
@@ -191,6 +211,8 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
                         if (authResult.isSuccess) {
                             Log.d(TAG, "Device authenticated successfully")
                             _isRegistered.value = true
+                            // Запускаем BindingPoller после успешной регистрации
+                            startBindingPoller()
                         } else {
                             _authError.value = authResult.exceptionOrNull()?.message
                                 ?: "Ошибка аутентификации"
@@ -222,6 +244,58 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
     override fun onCleared() {
         super.onCleared()
         stopPolling()
+        bindingPoller?.stop()
+    }
+
+    // ─── BindingPoller ───
+
+    /**
+     * Запускает BindingPoller для автоматического управления сбором данных.
+     * Вызывается после успешной регистрации и аутентификации.
+     */
+    private fun startBindingPoller() {
+        if (bindingPoller != null) {
+            Log.d(TAG, "BindingPoller already running")
+            return
+        }
+
+        val poller = BindingPoller(
+            context = getApplication(),
+            authManager = authManager,
+            credentialsStore = app.credentialsStore,
+            scope = viewModelScope
+        )
+
+        // Когда обнаружен активный binding → автостарт сбора
+        poller.onBindingStarted = { bindingId ->
+            Log.d(TAG, "Binding started: $bindingId → auto-starting collection")
+            _activeBindingId.value = bindingId
+            startCollectionAuto()
+        }
+
+        // Когда binding закрыт → автостоп сбора
+        poller.onBindingStopped = { bindingId ->
+            Log.d(TAG, "Binding stopped: $bindingId → auto-stopping collection")
+            _activeBindingId.value = null
+            stopCollectionAuto()
+        }
+
+        // Следим за состоянием поллера
+        viewModelScope.launch {
+            poller.state.collect { state ->
+                _pollerState.value = state
+            }
+        }
+
+        viewModelScope.launch {
+            poller.isCharging.collect { charging ->
+                _isCharging.value = charging
+            }
+        }
+
+        poller.start()
+        bindingPoller = poller
+        Log.d(TAG, "BindingPoller started")
     }
 
     // ─── Сброс устройства ───
@@ -235,20 +309,25 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             Log.w(TAG, "Device reset initiated")
 
-            // 1. Останавливаем сбор если работает
+            // 1. Останавливаем BindingPoller
+            bindingPoller?.stop()
+            bindingPoller = null
+
+            // 2. Останавливаем сбор если работает
             if (_isCollecting.value) {
                 CollectorService.stop(getApplication())
                 _isCollecting.value = false
                 _shiftStartTs.value = null
+                _activeBindingId.value = null
             }
 
-            // 2. Очищаем все credentials
+            // 3. Очищаем все credentials
             app.credentialsStore.clear()
 
-            // 3. Возвращаем на QR-экран
+            // 4. Возвращаем на QR-экран
             _isRegistered.value = false
 
-            // 4. Генерируем новый QR и начинаем поллинг
+            // 5. Генерируем новый QR и начинаем поллинг
             generateQrPayload()
             startPolling()
 
@@ -256,23 +335,41 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // ─── Сбор данных ───
+    // ─── Автоматический сбор данных ───
 
-    fun startCollection() {
+    /**
+     * Автоматический старт сбора при обнаружении активного binding.
+     * Вызывается из BindingPoller.onBindingStarted.
+     */
+    private fun startCollectionAuto() {
         viewModelScope.launch {
+            if (_isCollecting.value) {
+                Log.d(TAG, "Collection already active, ignoring duplicate start")
+                return@launch
+            }
             val startTs = System.currentTimeMillis()
             _shiftStartTs.value = startTs
             CollectorService.start(getApplication(), startTs)
             _isCollecting.value = true
+            Log.d(TAG, "Collection auto-started at $startTs")
         }
     }
 
-    fun stopCollection() {
+    /**
+     * Автоматический стоп сбора при закрытии binding.
+     * Вызывается из BindingPoller.onBindingStopped.
+     */
+    private fun stopCollectionAuto() {
         viewModelScope.launch {
+            if (!_isCollecting.value) {
+                Log.d(TAG, "Collection not active, ignoring stop")
+                return@launch
+            }
             val endTs = System.currentTimeMillis()
             CollectorService.stop(getApplication(), endTs)
             _isCollecting.value = false
             _shiftStartTs.value = null
+            Log.d(TAG, "Collection auto-stopped at $endTs")
         }
     }
 

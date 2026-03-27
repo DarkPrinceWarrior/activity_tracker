@@ -85,9 +85,11 @@ fun ActivityTrackerApp(viewModel: StatusViewModel) {
         // Экран QR-регистрации: показывает QR с device_id, поллит бэкенд
         RegistrationScreen(viewModel = viewModel)
     } else {
-        // Основной экран статуса
+        // Основной экран статуса (пассивный — без кнопок start/stop)
         val deviceId by viewModel.deviceId.collectAsState()
         val isCollecting by viewModel.isCollecting.collectAsState()
+        val pollerState by viewModel.pollerState.collectAsState()
+        val isCharging by viewModel.isChargingState.collectAsState()
         val pendingPackets by viewModel.pendingPacketsCount.collectAsState()
         val uploadedPackets by viewModel.uploadedPacketsCount.collectAsState()
         val errorPackets by viewModel.errorPacketsCount.collectAsState()
@@ -95,11 +97,11 @@ fun ActivityTrackerApp(viewModel: StatusViewModel) {
         StatusScreen(
             deviceId = deviceId,
             isCollecting = isCollecting,
+            pollerState = pollerState,
+            isCharging = isCharging,
             pendingPackets = pendingPackets,
             uploadedPackets = uploadedPackets,
             errorPackets = errorPackets,
-            onStartClick = { viewModel.startCollection() },
-            onStopClick = { viewModel.stopCollection() },
             onResetClick = { viewModel.resetDevice() }
         )
     }

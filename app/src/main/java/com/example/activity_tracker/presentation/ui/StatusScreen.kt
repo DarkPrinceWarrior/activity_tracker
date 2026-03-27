@@ -21,21 +21,30 @@ import androidx.wear.compose.material.*
 import androidx.wear.compose.material.dialog.Alert
 import androidx.wear.compose.material.dialog.Dialog
 import androidx.compose.foundation.background
+import com.example.activity_tracker.network.BindingPoller
 
 /**
- * StatusScreen — строгий нативный Wear OS дизайн.
- * Следует принципам Material 3 для часов:
- * глансируемость, вертикальный скролл, нативные компоненты.
+ * StatusScreen — пассивный экран статуса без кнопок управления.
+ *
+ * Управление сбором данных полностью делегировано оператору через мобилку:
+ * - Оператор создаёт binding → часы автоматически начинают сбор
+ * - Оператор закрывает binding → часы автоматически останавливаются
+ *
+ * Экран показывает:
+ * 1. Device ID
+ * 2. Текущий статус (ожидание / сбор / на зарядке)
+ * 3. Статистику пакетов (если есть)
+ * 4. Кнопку «Сбросить» (только в режиме ожидания)
  */
 @Composable
 fun StatusScreen(
     deviceId: String,
     isCollecting: Boolean,
+    pollerState: BindingPoller.PollerState,
+    isCharging: Boolean,
     pendingPackets: Int,
     uploadedPackets: Int,
     errorPackets: Int = 0,
-    onStartClick: () -> Unit,
-    onStopClick: () -> Unit,
     onResetClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -95,32 +104,14 @@ fun StatusScreen(
 
             // ─── 2. Статус (dominant text — главный акцент экрана) ────────
             item {
-                StatusLabel(isCollecting = isCollecting)
+                StatusLabel(
+                    isCollecting = isCollecting,
+                    pollerState = pollerState,
+                    isCharging = isCharging
+                )
             }
 
-            // ─── 3. Основная кнопка действия ─────────────────────────────
-            item {
-                Button(
-                    onClick = if (isCollecting) onStopClick else onStartClick,
-                    modifier = Modifier
-                        .fillMaxWidth(0.8f)
-                        .height(48.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        backgroundColor = if (isCollecting)
-                            MaterialTheme.colors.error
-                        else
-                            MaterialTheme.colors.primary
-                    )
-                ) {
-                    Text(
-                        text = if (isCollecting) "Стоп" else "Пуск",
-                        style = MaterialTheme.typography.button,
-                        color = MaterialTheme.colors.onPrimary
-                    )
-                }
-            }
-
-            // ─── 4. Статистика пакетов (только если есть данные) ─────────
+            // ─── 3. Статистика пакетов (только если есть данные) ─────────
             if (uploadedPackets > 0 || pendingPackets > 0 || errorPackets > 0) {
                 item {
                     PacketStats(
@@ -131,7 +122,7 @@ fun StatusScreen(
                 }
             }
 
-            // ─── 5. Кнопка сброса (только в режиме ожидания) ─────────────
+            // ─── 4. Кнопка сброса (только в режиме ожидания) ─────────────
             if (!isCollecting) {
                 item {
                     CompactChip(
@@ -151,10 +142,14 @@ fun StatusScreen(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Статус-лейбл с пульсирующим индикатором
+// Статус-лейбл с пульсирующим индикатором (расширенный)
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
-private fun StatusLabel(isCollecting: Boolean) {
+private fun StatusLabel(
+    isCollecting: Boolean,
+    pollerState: BindingPoller.PollerState,
+    isCharging: Boolean
+) {
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseScale by infiniteTransition.animateFloat(
         initialValue = 1f,
@@ -165,14 +160,22 @@ private fun StatusLabel(isCollecting: Boolean) {
         ),
         label = "pulseScale"
     )
+
+    // Цвет точки зависит от состояния
     val dotColor by animateColorAsState(
-        targetValue = if (isCollecting)
-            Color(0xFF4CAF50)
-        else
-            MaterialTheme.colors.onSurface.copy(alpha = 0.38f),
+        targetValue = when {
+            isCollecting -> Color(0xFF4CAF50)           // Зелёный — сбор активен
+            isCharging -> Color(0xFFFFB300)              // Жёлтый — на зарядке
+            pollerState == BindingPoller.PollerState.WAITING_FOR_BINDING ->
+                Color(0xFF42A5F5)                        // Синий — ожидание привязки
+            pollerState == BindingPoller.PollerState.JUST_STOPPED ->
+                Color(0xFFFF7043)                        // Оранжевый — только что остановлен
+            else -> MaterialTheme.colors.onSurface.copy(alpha = 0.38f)
+        },
         animationSpec = tween(400),
         label = "dotColor"
     )
+
     val labelColor by animateColorAsState(
         targetValue = if (isCollecting)
             MaterialTheme.colors.onBackground
@@ -181,6 +184,30 @@ private fun StatusLabel(isCollecting: Boolean) {
         animationSpec = tween(400),
         label = "labelColor"
     )
+
+    // Статусный текст
+    val statusText = when {
+        isCollecting -> "Сбор активен"
+        isCharging && pollerState == BindingPoller.PollerState.SLEEPING ->
+            "На зарядке"
+        pollerState == BindingPoller.PollerState.WAITING_FOR_BINDING ->
+            "Ожидание привязки"
+        pollerState == BindingPoller.PollerState.JUST_STOPPED ->
+            "Отправка данных"
+        else -> "Ожидание"
+    }
+
+    // Подсказка
+    val hintText = when {
+        isCollecting -> "Управляется оператором"
+        isCharging && pollerState == BindingPoller.PollerState.SLEEPING ->
+            "Снимите с зарядки для работы"
+        pollerState == BindingPoller.PollerState.WAITING_FOR_BINDING ->
+            "Сканируйте QR у оператора"
+        pollerState == BindingPoller.PollerState.JUST_STOPPED ->
+            "Готов к новой привязке"
+        else -> ""
+    }
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -207,13 +234,26 @@ private fun StatusLabel(isCollecting: Boolean) {
 
         // Текст статуса
         Text(
-            text = if (isCollecting) "Сбор активен" else "Сбор остановлен",
+            text = statusText,
             style = MaterialTheme.typography.title3.copy(
                 fontWeight = FontWeight.SemiBold
             ),
             color = labelColor,
             textAlign = TextAlign.Center
         )
+
+        // Подсказка
+        if (hintText.isNotBlank()) {
+            Text(
+                text = hintText,
+                style = MaterialTheme.typography.caption2.copy(
+                    fontSize = 10.sp
+                ),
+                color = MaterialTheme.colors.onBackground.copy(alpha = 0.45f),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(0.85f)
+            )
+        }
     }
 }
 

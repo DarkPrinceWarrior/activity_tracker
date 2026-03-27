@@ -40,4 +40,5 @@ object NetworkClient {
 
     val watchApiService: WatchApiService = retrofit.create(WatchApiService::class.java)
     val watchAuthService: WatchAuthService = retrofit.create(WatchAuthService::class.java)
+    val bindingApiService: BindingApiService = retrofit.create(BindingApiService::class.java)
 }
