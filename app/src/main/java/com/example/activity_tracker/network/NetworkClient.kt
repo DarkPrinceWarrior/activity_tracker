@@ -17,7 +17,7 @@ object NetworkClient {
      * Адрес бэкенда в локальной сети.
      * Для прода заменить на HTTPS-адрес.
      */
-    const val BASE_URL = "http://10.228.38.66:8000/api/v1/"
+    const val BASE_URL = "http://10.0.2.2:8000/api/v1/"
 
     private val loggingInterceptor = HttpLoggingInterceptor { message ->
         Log.d("OkHttp", message)
