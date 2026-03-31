@@ -25,6 +25,7 @@ class MainActivity : ComponentActivity() {
 
     private val requiredPermissions = buildList {
         add(Manifest.permission.BODY_SENSORS)
+        add(Manifest.permission.ACTIVITY_RECOGNITION)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             add(Manifest.permission.BLUETOOTH_SCAN)
             add(Manifest.permission.BLUETOOTH_CONNECT)

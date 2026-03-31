@@ -25,6 +25,9 @@
     <uses-permission android:name="android.permission.BODY_SENSORS" />
     <uses-permission android:name="android.permission.BODY_SENSORS_BACKGROUND" />
 
+    <!-- Шагомер (Android 10+ требует runtime permission) -->
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+
     <!-- Требуемые аппаратные возможности -->
     <uses-feature android:name="android.hardware.type.watch" />
     <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="true" />
@@ -32,6 +35,7 @@
     <uses-feature android:name="android.hardware.sensor.barometer" android:required="false" />
     <uses-feature android:name="android.hardware.sensor.compass" android:required="false" />
     <uses-feature android:name="android.hardware.sensor.heartrate" android:required="false" />
+    <uses-feature android:name="android.hardware.sensor.stepcounter" android:required="false" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
 
     <application
