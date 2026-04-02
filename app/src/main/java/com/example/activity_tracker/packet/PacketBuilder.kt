@@ -3,6 +3,7 @@ package com.example.activity_tracker.packet
 import android.content.Context
 import android.os.Build
 import android.util.Log
+import com.example.activity_tracker.battery.BatteryTracker
 import com.example.activity_tracker.data.repository.SamplesRepository
 import com.example.activity_tracker.packet.model.AccelSample
 import com.example.activity_tracker.packet.model.BatterySample
@@ -34,6 +35,8 @@ class PacketBuilder(
     private val deviceId: String,
     private val gson: Gson = Gson()
 ) {
+    private val batteryTracker = BatteryTracker(context)
+
 
     /**
      * Собирает все данные за период [startTs, endTs] и формирует ShiftPacket
@@ -79,7 +82,7 @@ class PacketBuilder(
 
         val wearList = wearEvents.map { WearSample(it.ts_ms, it.state) }
 
-        val batteryList = batteryEvents.map { BatterySample(it.ts_ms, it.level) }
+        val batteryList = buildBatterySamples(batteryEvents, endTs)
 
         val downtimeList = downtimeReasons.map {
             DowntimeSample(it.ts_ms, it.reason_id, it.zone_id)
@@ -136,6 +139,21 @@ class PacketBuilder(
         app_version = getAppVersion(),
         timezone = TimeZone.getDefault().id
     )
+
+    private fun buildBatterySamples(
+        batteryEvents: List<com.example.activity_tracker.data.local.entity.BatteryEntity>,
+        snapshotTs: Long
+    ): List<BatterySample> {
+        val samples = batteryEvents.map { BatterySample(it.ts_ms, it.level) }.toMutableList()
+        val snapshotLevel = batteryTracker.getCurrentBatteryLevel().coerceIn(0f, 1f)
+
+        // Battery changes are sparse, so include a current snapshot in every packet window.
+        samples += BatterySample(
+            ts_ms = snapshotTs,
+            level = snapshotLevel
+        )
+        return samples
+    }
 
     private fun getAppVersion(): String = try {
         val info = context.packageManager.getPackageInfo(context.packageName, 0)
