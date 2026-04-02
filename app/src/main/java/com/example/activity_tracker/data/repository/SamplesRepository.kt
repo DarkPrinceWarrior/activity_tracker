@@ -16,6 +16,7 @@ interface SamplesRepository {
 
     suspend fun enqueuePacket(item: PacketQueueEntity)
     fun observeQueue(status: String): Flow<List<PacketQueueEntity>>
+    fun observeQueueForShift(status: String, shiftStartTs: Long): Flow<List<PacketQueueEntity>>
     suspend fun updatePacketStatus(packetId: String, status: String, attempt: Int, error: String?)
     suspend fun getPendingPackets(): List<PacketQueueEntity>
 

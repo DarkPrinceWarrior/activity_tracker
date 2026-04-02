@@ -18,6 +18,16 @@ interface PacketQueueDao {
     @Query("SELECT * FROM packet_queue WHERE status = :status ORDER BY created_ts_ms ASC")
     fun byStatusFlow(status: String): Flow<List<PacketQueueEntity>>
 
+    @Query(
+        "SELECT * FROM packet_queue " +
+            "WHERE status = :status AND shift_start_ts_ms = :shiftStartTs " +
+            "ORDER BY created_ts_ms ASC"
+    )
+    fun byStatusFlowForShift(
+        status: String,
+        shiftStartTs: Long,
+    ): Flow<List<PacketQueueEntity>>
+
     @Query("UPDATE packet_queue SET status = :status, attempt = :attempt, last_error = :err WHERE packet_id = :id")
     fun updateStatus(id: String, status: String, attempt: Int, err: String?)
 

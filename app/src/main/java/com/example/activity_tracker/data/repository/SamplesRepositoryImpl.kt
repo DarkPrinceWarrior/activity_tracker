@@ -56,6 +56,12 @@ class SamplesRepositoryImpl(
     override fun observeQueue(status: String): Flow<List<PacketQueueEntity>> =
         db.packetQueueDao().byStatusFlow(status)
 
+    override fun observeQueueForShift(
+        status: String,
+        shiftStartTs: Long,
+    ): Flow<List<PacketQueueEntity>> =
+        db.packetQueueDao().byStatusFlowForShift(status, shiftStartTs)
+
     override suspend fun updatePacketStatus(
         packetId: String,
         status: String,

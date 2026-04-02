@@ -12,10 +12,12 @@ import com.example.activity_tracker.packet.PacketPipeline
 import com.example.activity_tracker.service.CollectorService
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -90,18 +92,36 @@ class StatusViewModel(application: Application) : AndroidViewModel(application) 
     private val _isCharging = MutableStateFlow(false)
     val isChargingState: StateFlow<Boolean> = _isCharging.asStateFlow()
 
-    val pendingPacketsCount: StateFlow<Int> = repository
-        .observeQueue(PacketPipeline.STATUS_PENDING)
+    val pendingPacketsCount: StateFlow<Int> = _shiftStartTs
+        .flatMapLatest { shiftStartTs ->
+            if (shiftStartTs == null) {
+                flowOf(emptyList())
+            } else {
+                repository.observeQueueForShift(PacketPipeline.STATUS_PENDING, shiftStartTs)
+            }
+        }
         .map { it.size }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
-    val uploadedPacketsCount: StateFlow<Int> = repository
-        .observeQueue(PacketPipeline.STATUS_UPLOADED)
+    val uploadedPacketsCount: StateFlow<Int> = _shiftStartTs
+        .flatMapLatest { shiftStartTs ->
+            if (shiftStartTs == null) {
+                flowOf(emptyList())
+            } else {
+                repository.observeQueueForShift(PacketPipeline.STATUS_UPLOADED, shiftStartTs)
+            }
+        }
         .map { it.size }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
-    val errorPacketsCount: StateFlow<Int> = repository
-        .observeQueue(PacketPipeline.STATUS_ERROR)
+    val errorPacketsCount: StateFlow<Int> = _shiftStartTs
+        .flatMapLatest { shiftStartTs ->
+            if (shiftStartTs == null) {
+                flowOf(emptyList())
+            } else {
+                repository.observeQueueForShift(PacketPipeline.STATUS_ERROR, shiftStartTs)
+            }
+        }
         .map { it.size }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
