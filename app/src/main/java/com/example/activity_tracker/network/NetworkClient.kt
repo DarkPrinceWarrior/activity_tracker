@@ -14,10 +14,9 @@ import java.util.concurrent.TimeUnit
 object NetworkClient {
 
     /**
-     * Адрес бэкенда в локальной сети.
-     * Для прода заменить на HTTPS-адрес.
+     * Внешний HTTPS-адрес backend.
      */
-    const val BASE_URL = "http://10.0.2.2:8000/api/v1/"
+    const val BASE_URL = "https://watch.ds-mind-lab.ru/api/v1/"
 
     private val loggingInterceptor = HttpLoggingInterceptor { message ->
         Log.d("OkHttp", message)
