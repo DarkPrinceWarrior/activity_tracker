@@ -20,7 +20,7 @@ interface PacketQueueDao {
 
     @Query(
         "SELECT * FROM packet_queue " +
-            "WHERE status = :status AND shift_start_ts_ms = :shiftStartTs " +
+            "WHERE status = :status AND created_ts_ms >= :shiftStartTs " +
             "ORDER BY created_ts_ms ASC"
     )
     fun byStatusFlowForShift(
